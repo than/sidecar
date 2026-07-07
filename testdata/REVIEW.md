@@ -1,0 +1,339 @@
+# REVIEW QUEUE
+
+Live review queue for the House project. Watched by sidecar.
+
+## 🔴 Needs action
+
+- PR 412 **migrations check constraints** ready for merge word
+- https://github.com/broomfitters/house/pull/412
+- PR 415 **club shop onboarding wizard** conflicts resolved
+- https://github.com/broomfitters/house/pull/415
+
+## 🟡 Re-look
+
+- QA fix pushed for the checkout race, please re-verify
+- https://qa.broomfitters.dev/checkout-race
+- Artifact updated with the new consolidation numbers
+- https://claude.ai/artifacts/abc123
+
+## 🟢 Signed off, awaiting batch
+
+- PR 401 **payroll splits** signed off
+- PR 402 **zoho import dedupe** signed off
+
+## ✅ Merged
+
+- PR 398 **DNS cutover scripts** merged 14:02
+- PR 399 **intercompany eliminations** merged 14:31
+
+## Notes
+
+Some *emphasis*, some **bold text**, and `inline code` for width checks.
+
+> A block quote line to verify quote indentation stays compact.
+
+```
+a fenced code block
+with two lines
+```
+
+- filler review line 1 to make the body long enough to scroll
+- filler review line 2 to make the body long enough to scroll
+- filler review line 3 to make the body long enough to scroll
+- filler review line 4 to make the body long enough to scroll
+- filler review line 5 to make the body long enough to scroll
+- filler review line 6 to make the body long enough to scroll
+- filler review line 7 to make the body long enough to scroll
+- filler review line 8 to make the body long enough to scroll
+- filler review line 9 to make the body long enough to scroll
+- filler review line 10 to make the body long enough to scroll
+- filler review line 11 to make the body long enough to scroll
+- filler review line 12 to make the body long enough to scroll
+- filler review line 13 to make the body long enough to scroll
+- filler review line 14 to make the body long enough to scroll
+- filler review line 15 to make the body long enough to scroll
+- filler review line 16 to make the body long enough to scroll
+- filler review line 17 to make the body long enough to scroll
+- filler review line 18 to make the body long enough to scroll
+- filler review line 19 to make the body long enough to scroll
+- filler review line 20 to make the body long enough to scroll
+- filler review line 21 to make the body long enough to scroll
+- filler review line 22 to make the body long enough to scroll
+- filler review line 23 to make the body long enough to scroll
+- filler review line 24 to make the body long enough to scroll
+- filler review line 25 to make the body long enough to scroll
+- filler review line 26 to make the body long enough to scroll
+- filler review line 27 to make the body long enough to scroll
+- filler review line 28 to make the body long enough to scroll
+- filler review line 29 to make the body long enough to scroll
+- filler review line 30 to make the body long enough to scroll
+- filler review line 31 to make the body long enough to scroll
+- filler review line 32 to make the body long enough to scroll
+- filler review line 33 to make the body long enough to scroll
+- filler review line 34 to make the body long enough to scroll
+- filler review line 35 to make the body long enough to scroll
+- filler review line 36 to make the body long enough to scroll
+- filler review line 37 to make the body long enough to scroll
+- filler review line 38 to make the body long enough to scroll
+- filler review line 39 to make the body long enough to scroll
+- filler review line 40 to make the body long enough to scroll
+- filler review line 41 to make the body long enough to scroll
+- filler review line 42 to make the body long enough to scroll
+- filler review line 43 to make the body long enough to scroll
+- filler review line 44 to make the body long enough to scroll
+- filler review line 45 to make the body long enough to scroll
+- filler review line 46 to make the body long enough to scroll
+- filler review line 47 to make the body long enough to scroll
+- filler review line 48 to make the body long enough to scroll
+- filler review line 49 to make the body long enough to scroll
+- filler review line 50 to make the body long enough to scroll
+- filler review line 51 to make the body long enough to scroll
+- filler review line 52 to make the body long enough to scroll
+- filler review line 53 to make the body long enough to scroll
+- filler review line 54 to make the body long enough to scroll
+- filler review line 55 to make the body long enough to scroll
+- filler review line 56 to make the body long enough to scroll
+- filler review line 57 to make the body long enough to scroll
+- filler review line 58 to make the body long enough to scroll
+- filler review line 59 to make the body long enough to scroll
+- filler review line 60 to make the body long enough to scroll
+- filler review line 61 to make the body long enough to scroll
+- filler review line 62 to make the body long enough to scroll
+- filler review line 63 to make the body long enough to scroll
+- filler review line 64 to make the body long enough to scroll
+- filler review line 65 to make the body long enough to scroll
+- filler review line 66 to make the body long enough to scroll
+- filler review line 67 to make the body long enough to scroll
+- filler review line 68 to make the body long enough to scroll
+- filler review line 69 to make the body long enough to scroll
+- filler review line 70 to make the body long enough to scroll
+- filler review line 71 to make the body long enough to scroll
+- filler review line 72 to make the body long enough to scroll
+- filler review line 73 to make the body long enough to scroll
+- filler review line 74 to make the body long enough to scroll
+- filler review line 75 to make the body long enough to scroll
+- filler review line 76 to make the body long enough to scroll
+- filler review line 77 to make the body long enough to scroll
+- filler review line 78 to make the body long enough to scroll
+- filler review line 79 to make the body long enough to scroll
+- filler review line 80 to make the body long enough to scroll
+- filler review line 81 to make the body long enough to scroll
+- filler review line 82 to make the body long enough to scroll
+- filler review line 83 to make the body long enough to scroll
+- filler review line 84 to make the body long enough to scroll
+- filler review line 85 to make the body long enough to scroll
+- filler review line 86 to make the body long enough to scroll
+- filler review line 87 to make the body long enough to scroll
+- filler review line 88 to make the body long enough to scroll
+- filler review line 89 to make the body long enough to scroll
+- filler review line 90 to make the body long enough to scroll
+- filler review line 91 to make the body long enough to scroll
+- filler review line 92 to make the body long enough to scroll
+- filler review line 93 to make the body long enough to scroll
+- filler review line 94 to make the body long enough to scroll
+- filler review line 95 to make the body long enough to scroll
+- filler review line 96 to make the body long enough to scroll
+- filler review line 97 to make the body long enough to scroll
+- filler review line 98 to make the body long enough to scroll
+- filler review line 99 to make the body long enough to scroll
+- filler review line 100 to make the body long enough to scroll
+- filler review line 101 to make the body long enough to scroll
+- filler review line 102 to make the body long enough to scroll
+- filler review line 103 to make the body long enough to scroll
+- filler review line 104 to make the body long enough to scroll
+- filler review line 105 to make the body long enough to scroll
+- filler review line 106 to make the body long enough to scroll
+- filler review line 107 to make the body long enough to scroll
+- filler review line 108 to make the body long enough to scroll
+- filler review line 109 to make the body long enough to scroll
+- filler review line 110 to make the body long enough to scroll
+- filler review line 111 to make the body long enough to scroll
+- filler review line 112 to make the body long enough to scroll
+- filler review line 113 to make the body long enough to scroll
+- filler review line 114 to make the body long enough to scroll
+- filler review line 115 to make the body long enough to scroll
+- filler review line 116 to make the body long enough to scroll
+- filler review line 117 to make the body long enough to scroll
+- filler review line 118 to make the body long enough to scroll
+- filler review line 119 to make the body long enough to scroll
+- filler review line 120 to make the body long enough to scroll
+- filler review line 121 to make the body long enough to scroll
+- filler review line 122 to make the body long enough to scroll
+- filler review line 123 to make the body long enough to scroll
+- filler review line 124 to make the body long enough to scroll
+- filler review line 125 to make the body long enough to scroll
+- filler review line 126 to make the body long enough to scroll
+- filler review line 127 to make the body long enough to scroll
+- filler review line 128 to make the body long enough to scroll
+- filler review line 129 to make the body long enough to scroll
+- filler review line 130 to make the body long enough to scroll
+- filler review line 131 to make the body long enough to scroll
+- filler review line 132 to make the body long enough to scroll
+- filler review line 133 to make the body long enough to scroll
+- filler review line 134 to make the body long enough to scroll
+- filler review line 135 to make the body long enough to scroll
+- filler review line 136 to make the body long enough to scroll
+- filler review line 137 to make the body long enough to scroll
+- filler review line 138 to make the body long enough to scroll
+- filler review line 139 to make the body long enough to scroll
+- filler review line 140 to make the body long enough to scroll
+- filler review line 141 to make the body long enough to scroll
+- filler review line 142 to make the body long enough to scroll
+- filler review line 143 to make the body long enough to scroll
+- filler review line 144 to make the body long enough to scroll
+- filler review line 145 to make the body long enough to scroll
+- filler review line 146 to make the body long enough to scroll
+- filler review line 147 to make the body long enough to scroll
+- filler review line 148 to make the body long enough to scroll
+- filler review line 149 to make the body long enough to scroll
+- filler review line 150 to make the body long enough to scroll
+- filler review line 151 to make the body long enough to scroll
+- filler review line 152 to make the body long enough to scroll
+- filler review line 153 to make the body long enough to scroll
+- filler review line 154 to make the body long enough to scroll
+- filler review line 155 to make the body long enough to scroll
+- filler review line 156 to make the body long enough to scroll
+- filler review line 157 to make the body long enough to scroll
+- filler review line 158 to make the body long enough to scroll
+- filler review line 159 to make the body long enough to scroll
+- filler review line 160 to make the body long enough to scroll
+- filler review line 161 to make the body long enough to scroll
+- filler review line 162 to make the body long enough to scroll
+- filler review line 163 to make the body long enough to scroll
+- filler review line 164 to make the body long enough to scroll
+- filler review line 165 to make the body long enough to scroll
+- filler review line 166 to make the body long enough to scroll
+- filler review line 167 to make the body long enough to scroll
+- filler review line 168 to make the body long enough to scroll
+- filler review line 169 to make the body long enough to scroll
+- filler review line 170 to make the body long enough to scroll
+- filler review line 171 to make the body long enough to scroll
+- filler review line 172 to make the body long enough to scroll
+- filler review line 173 to make the body long enough to scroll
+- filler review line 174 to make the body long enough to scroll
+- filler review line 175 to make the body long enough to scroll
+- filler review line 176 to make the body long enough to scroll
+- filler review line 177 to make the body long enough to scroll
+- filler review line 178 to make the body long enough to scroll
+- filler review line 179 to make the body long enough to scroll
+- filler review line 180 to make the body long enough to scroll
+- filler review line 181 to make the body long enough to scroll
+- filler review line 182 to make the body long enough to scroll
+- filler review line 183 to make the body long enough to scroll
+- filler review line 184 to make the body long enough to scroll
+- filler review line 185 to make the body long enough to scroll
+- filler review line 186 to make the body long enough to scroll
+- filler review line 187 to make the body long enough to scroll
+- filler review line 188 to make the body long enough to scroll
+- filler review line 189 to make the body long enough to scroll
+- filler review line 190 to make the body long enough to scroll
+- filler review line 191 to make the body long enough to scroll
+- filler review line 192 to make the body long enough to scroll
+- filler review line 193 to make the body long enough to scroll
+- filler review line 194 to make the body long enough to scroll
+- filler review line 195 to make the body long enough to scroll
+- filler review line 196 to make the body long enough to scroll
+- filler review line 197 to make the body long enough to scroll
+- filler review line 198 to make the body long enough to scroll
+- filler review line 199 to make the body long enough to scroll
+- filler review line 200 to make the body long enough to scroll
+- filler review line 201 to make the body long enough to scroll
+- filler review line 202 to make the body long enough to scroll
+- filler review line 203 to make the body long enough to scroll
+- filler review line 204 to make the body long enough to scroll
+- filler review line 205 to make the body long enough to scroll
+- filler review line 206 to make the body long enough to scroll
+- filler review line 207 to make the body long enough to scroll
+- filler review line 208 to make the body long enough to scroll
+- filler review line 209 to make the body long enough to scroll
+- filler review line 210 to make the body long enough to scroll
+- filler review line 211 to make the body long enough to scroll
+- filler review line 212 to make the body long enough to scroll
+- filler review line 213 to make the body long enough to scroll
+- filler review line 214 to make the body long enough to scroll
+- filler review line 215 to make the body long enough to scroll
+- filler review line 216 to make the body long enough to scroll
+- filler review line 217 to make the body long enough to scroll
+- filler review line 218 to make the body long enough to scroll
+- filler review line 219 to make the body long enough to scroll
+- filler review line 220 to make the body long enough to scroll
+- filler review line 221 to make the body long enough to scroll
+- filler review line 222 to make the body long enough to scroll
+- filler review line 223 to make the body long enough to scroll
+- filler review line 224 to make the body long enough to scroll
+- filler review line 225 to make the body long enough to scroll
+- filler review line 226 to make the body long enough to scroll
+- filler review line 227 to make the body long enough to scroll
+- filler review line 228 to make the body long enough to scroll
+- filler review line 229 to make the body long enough to scroll
+- filler review line 230 to make the body long enough to scroll
+- filler review line 231 to make the body long enough to scroll
+- filler review line 232 to make the body long enough to scroll
+- filler review line 233 to make the body long enough to scroll
+- filler review line 234 to make the body long enough to scroll
+- filler review line 235 to make the body long enough to scroll
+- filler review line 236 to make the body long enough to scroll
+- filler review line 237 to make the body long enough to scroll
+- filler review line 238 to make the body long enough to scroll
+- filler review line 239 to make the body long enough to scroll
+- filler review line 240 to make the body long enough to scroll
+- filler review line 241 to make the body long enough to scroll
+- filler review line 242 to make the body long enough to scroll
+- filler review line 243 to make the body long enough to scroll
+- filler review line 244 to make the body long enough to scroll
+- filler review line 245 to make the body long enough to scroll
+- filler review line 246 to make the body long enough to scroll
+- filler review line 247 to make the body long enough to scroll
+- filler review line 248 to make the body long enough to scroll
+- filler review line 249 to make the body long enough to scroll
+- filler review line 250 to make the body long enough to scroll
+- filler review line 251 to make the body long enough to scroll
+- filler review line 252 to make the body long enough to scroll
+- filler review line 253 to make the body long enough to scroll
+- filler review line 254 to make the body long enough to scroll
+- filler review line 255 to make the body long enough to scroll
+- filler review line 256 to make the body long enough to scroll
+- filler review line 257 to make the body long enough to scroll
+- filler review line 258 to make the body long enough to scroll
+- filler review line 259 to make the body long enough to scroll
+- filler review line 260 to make the body long enough to scroll
+- filler review line 261 to make the body long enough to scroll
+- filler review line 262 to make the body long enough to scroll
+- filler review line 263 to make the body long enough to scroll
+- filler review line 264 to make the body long enough to scroll
+- filler review line 265 to make the body long enough to scroll
+- filler review line 266 to make the body long enough to scroll
+- filler review line 267 to make the body long enough to scroll
+- filler review line 268 to make the body long enough to scroll
+- filler review line 269 to make the body long enough to scroll
+- filler review line 270 to make the body long enough to scroll
+- filler review line 271 to make the body long enough to scroll
+- filler review line 272 to make the body long enough to scroll
+- filler review line 273 to make the body long enough to scroll
+- filler review line 274 to make the body long enough to scroll
+- filler review line 275 to make the body long enough to scroll
+- filler review line 276 to make the body long enough to scroll
+- filler review line 277 to make the body long enough to scroll
+- filler review line 278 to make the body long enough to scroll
+- filler review line 279 to make the body long enough to scroll
+- filler review line 280 to make the body long enough to scroll
+- filler review line 281 to make the body long enough to scroll
+- filler review line 282 to make the body long enough to scroll
+- filler review line 283 to make the body long enough to scroll
+- filler review line 284 to make the body long enough to scroll
+- filler review line 285 to make the body long enough to scroll
+- filler review line 286 to make the body long enough to scroll
+- filler review line 287 to make the body long enough to scroll
+- filler review line 288 to make the body long enough to scroll
+- filler review line 289 to make the body long enough to scroll
+- filler review line 290 to make the body long enough to scroll
+- filler review line 291 to make the body long enough to scroll
+- filler review line 292 to make the body long enough to scroll
+- filler review line 293 to make the body long enough to scroll
+- filler review line 294 to make the body long enough to scroll
+- filler review line 295 to make the body long enough to scroll
+- filler review line 296 to make the body long enough to scroll
+- filler review line 297 to make the body long enough to scroll
+- filler review line 298 to make the body long enough to scroll
+- filler review line 299 to make the body long enough to scroll
+- filler review line 300 to make the body long enough to scroll
