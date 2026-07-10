@@ -72,8 +72,8 @@ func TestNoTrailingSpacePadding(t *testing.T) {
 func TestBareURLIntact(t *testing.T) {
 	out := stripANSI(renderFixture(t, 78))
 	for _, url := range []string{
-		"https://github.com/broomfitters/house/pull/412",
-		"https://qa.broomfitters.dev/checkout-race",
+		"https://github.com/example/app/pull/412",
+		"https://qa.example.dev/checkout-race",
 	} {
 		found := false
 		for _, line := range strings.Split(out, "\n") {

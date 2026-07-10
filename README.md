@@ -6,7 +6,7 @@ to sit beside a Claude Code session and watch the `REVIEW.md` queue Claude
 maintains during long working sessions.
 
 ```
-sidecar [file.md]        # default: ~/Broomfitters/house/REVIEW.md
+sidecar path/to/FILE.md
 ```
 
 ## What it does

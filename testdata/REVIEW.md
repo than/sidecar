@@ -1,18 +1,18 @@
 # REVIEW QUEUE
 
-Live review queue for the House project. Watched by sidecar.
+Example review queue, watched by sidecar in the tests.
 
 ## 🔴 Needs action
 
 - PR 412 **migrations check constraints** ready for merge word
-- https://github.com/broomfitters/house/pull/412
+- https://github.com/example/app/pull/412
 - PR 415 **club shop onboarding wizard** conflicts resolved
-- https://github.com/broomfitters/house/pull/415
+- https://github.com/example/app/pull/415
 
 ## 🟡 Re-look
 
 - QA fix pushed for the checkout race, please re-verify
-- https://qa.broomfitters.dev/checkout-race
+- https://qa.example.dev/checkout-race
 - Artifact updated with the new consolidation numbers
 - https://claude.ai/artifacts/abc123
 

@@ -9,25 +9,29 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const defaultFile = "~/Broomfitters/house/REVIEW.md"
+const usage = `sidecar — live-updating markdown viewer for a terminal side pane
 
-func main() {
-	path := defaultFile
-	if len(os.Args) > 1 {
-		if os.Args[1] == "-h" || os.Args[1] == "--help" {
-			fmt.Printf(`sidecar — live-updating markdown viewer for a terminal side pane
-
-usage: sidecar [file.md]   (default: %s)
+usage: sidecar <file.md>
 
 keys:  j/k, arrows, PgUp/PgDn, mouse wheel  scroll
        g / G                                top / bottom
        r                                    force reload
        q                                    quit
-`, defaultFile)
-			return
-		}
-		path = os.Args[1]
+
+The file doesn't have to exist yet — sidecar waits for it and renders the
+moment it appears, then live-reloads on every change.
+`
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
 	}
+	if os.Args[1] == "-h" || os.Args[1] == "--help" {
+		fmt.Print(usage)
+		return
+	}
+	path := os.Args[1]
 
 	abs, err := filepath.Abs(expandTilde(path))
 	if err != nil {

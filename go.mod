@@ -1,4 +1,4 @@
-module sidecar
+module github.com/than/sidecar
 
 go 1.26.4
 
