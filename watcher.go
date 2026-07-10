@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fsnotify/fsnotify"
 )
 
 const debounce = 100 * time.Millisecond
