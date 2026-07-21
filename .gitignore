@@ -1,3 +1,6 @@
 /sidecar
 *.test
 .DS_Store
+
+# GoReleaser build output
+/dist/
