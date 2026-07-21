@@ -207,7 +207,7 @@ func (m model) statusBar() string {
 		updated = "updated " + humanSince(time.Since(m.lastMod)) + " ago"
 	}
 
-	left := " " + name + " "
+	left := " 🚗 " + name + " "
 	info := "· " + updated
 	pct := fmt.Sprintf(" %3.0f%% ", m.vp.ScrollPercent()*100)
 
