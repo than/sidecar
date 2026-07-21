@@ -9,9 +9,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const usage = `sidecar — live-updating markdown viewer for a terminal side pane
+const defaultFile = "SIDECAR.md"
 
-usage: sidecar <file.md>
+const help = `sidecar — live-updating markdown viewer for a terminal side pane
+
+usage: sidecar [file.md]   (default: ./SIDECAR.md)
 
 keys:  j/k, arrows, PgUp/PgDn, mouse wheel  scroll
        g / G                                top / bottom
@@ -23,15 +25,14 @@ moment it appears, then live-reloads on every change.
 `
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+	path := defaultFile
+	if len(os.Args) > 1 {
+		if os.Args[1] == "-h" || os.Args[1] == "--help" {
+			fmt.Print(help)
+			return
+		}
+		path = os.Args[1]
 	}
-	if os.Args[1] == "-h" || os.Args[1] == "--help" {
-		fmt.Print(usage)
-		return
-	}
-	path := os.Args[1]
 
 	abs, err := filepath.Abs(expandTilde(path))
 	if err != nil {
