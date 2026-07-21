@@ -113,7 +113,7 @@ func (m *model) reload(force bool) {
 		m.lastMod, m.lastSize = time.Time{}, 0
 		m.raw = ""
 		if m.fileMissing {
-			m.vp.SetContent(fmt.Sprintf("\n  Waiting for %s …\n\n  It will render the moment it appears.", m.path))
+			m.vp.SetContent(waitingView(m.path))
 		} else {
 			m.vp.SetContent(fmt.Sprintf("\n  Error reading %s:\n  %v", m.path, err))
 		}
@@ -158,7 +158,32 @@ var (
 			Foreground(lipgloss.Color(colorStatusHi)).
 			Background(lipgloss.Color(colorStatusBg)).
 			Bold(true)
+
+	waitBadgeStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorH1Fg)).
+			Background(lipgloss.Color(colorH1Bg)).
+			Bold(true)
+	waitAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorHeading)).Bold(true)
+	waitDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(colorStatusFg))
 )
+
+// waitingView is the placeholder shown before the file exists — a small
+// styled header so an empty pane still looks intentional, plus which file
+// it's watching for.
+func waitingView(path string) string {
+	var b strings.Builder
+	b.WriteString("\n  ")
+	b.WriteString(waitBadgeStyle.Render(" ▍sidecar "))
+	b.WriteString("  ")
+	b.WriteString(waitDimStyle.Render("your AI's live scratchpad"))
+	b.WriteString("\n\n  ")
+	b.WriteString(waitAccentStyle.Render("⧗ waiting for ") + filepath.Base(path))
+	b.WriteString("\n  ")
+	b.WriteString(waitDimStyle.Render("  it renders the moment it appears — run `sidecar init` to make one"))
+	b.WriteString("\n\n  ")
+	b.WriteString(waitDimStyle.Render(path))
+	return b.String()
+}
 
 func (m model) View() string {
 	if !m.ready {

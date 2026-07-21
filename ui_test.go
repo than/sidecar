@@ -95,7 +95,7 @@ func TestMissingFileThenCreated(t *testing.T) {
 	if !m.fileMissing {
 		t.Fatal("fileMissing = false for nonexistent file")
 	}
-	if !strings.Contains(m.vp.View(), "Waiting for") {
+	if !strings.Contains(stripANSI(m.vp.View()), "waiting for") {
 		t.Errorf("no waiting message shown")
 	}
 
