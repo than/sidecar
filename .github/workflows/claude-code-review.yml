@@ -1,0 +1,78 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+jobs:
+  claude-review:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are an expert Go reviewer for `sidecar`, a small terminal
+            markdown viewer (Bubble Tea + glamour + fsnotify). Read README.md
+            for context and the project's hard requirements.
+
+            Review this PR like a senior Go engineer. Focus on:
+
+            **Correctness (highest priority):**
+            - File watching must survive atomic rename-swaps, deletes, and
+              recreates — it watches the parent directory, not the inode. Any
+              change here must not regress that.
+            - Scroll position is preserved across reloads, and clamped when
+              content shrinks. Verify reload logic keeps this.
+            - Rendered output must NEVER be wider than the pane width — that
+              reintroduces the line-wrap / fake-double-spacing bug the tool
+              exists to avoid.
+            - Concurrency: the watcher goroutine talks to the Bubble Tea
+              program via p.Send. Check for data races and missed events.
+
+            **Rendering style (don't regress these):**
+            - Compact spacing: at most one blank line between blocks, no
+              trailing-space padding.
+            - Colors stay hex / truecolor, never 256-palette indexes (the
+              target terminal remaps the palette).
+            - Bare URLs stay intact on their own line so terminals can
+              linkify them.
+
+            **Go quality:**
+            - Idiomatic error handling; no swallowed errors on real paths.
+            - No unnecessary abstractions; changes minimal and focused on the
+              PR's stated purpose.
+
+            **What NOT to flag:**
+            - Features or refactors beyond the PR's scope.
+            - Formatting (gofmt owns it).
+            - Intentional design decisions documented in README or comments.
+
+            Be direct and brief. If the PR is solid, say so. If there are real
+            problems, be specific about what's wrong and the fix.
+
+            IMPORTANT: Do NOT use #N (e.g. #1, #2, #3) to number feedback
+            items — GitHub auto-links #N to issue numbers. Use bullet points,
+            letters (a, b, c), or descriptive headers instead.
+
+            Use `gh pr comment` with your Bash tool to leave your review as a
+            comment on the PR.
+
+          claude_args: '--model opus --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(go build:*),Bash(go test:*),Bash(go vet:*),Bash(gofmt:*)"'

@@ -13,7 +13,8 @@ const defaultFile = "SIDECAR.md"
 
 const help = `sidecar — live-updating markdown viewer for a terminal side pane
 
-usage: sidecar [file.md]   (default: ./SIDECAR.md)
+usage: sidecar [file.md]        (default: ./SIDECAR.md)
+       sidecar init [file.md]   scaffold the file, optionally git-exclude it
 
 keys:  j/k, arrows, PgUp/PgDn, mouse wheel  scroll
        g / G                                top / bottom
@@ -27,11 +28,15 @@ moment it appears, then live-reloads on every change.
 func main() {
 	path := defaultFile
 	if len(os.Args) > 1 {
-		if os.Args[1] == "-h" || os.Args[1] == "--help" {
+		switch os.Args[1] {
+		case "-h", "--help":
 			fmt.Print(help)
 			return
+		case "init":
+			os.Exit(runInit(os.Args[2:]))
+		default:
+			path = os.Args[1]
 		}
-		path = os.Args[1]
 	}
 
 	abs, err := filepath.Abs(expandTilde(path))
