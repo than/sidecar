@@ -173,7 +173,7 @@ var (
 func waitingView(path string) string {
 	var b strings.Builder
 	b.WriteString("\n  ")
-	b.WriteString(waitBadgeStyle.Render(" ▍sidecar "))
+	b.WriteString(waitBadgeStyle.Render(" 🚗 sidecar "))
 	b.WriteString("  ")
 	b.WriteString(waitDimStyle.Render("your AI's live scratchpad"))
 	b.WriteString("\n\n  ")

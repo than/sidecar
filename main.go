@@ -11,6 +11,9 @@ import (
 
 const defaultFile = "SIDECAR.md"
 
+// version is overwritten at release time via -ldflags -X main.version.
+var version = "dev"
+
 const help = `sidecar — live-updating markdown viewer for a terminal side pane
 
 usage: sidecar [file.md]        (default: ./SIDECAR.md)
@@ -31,6 +34,9 @@ func main() {
 		switch os.Args[1] {
 		case "-h", "--help":
 			fmt.Print(help)
+			return
+		case "-v", "--version":
+			fmt.Println("sidecar", version)
 			return
 		case "init":
 			os.Exit(runInit(os.Args[2:]))
