@@ -45,14 +45,29 @@ narrow pane on a dark background:
 To tune colors, edit the `color…` constants at the top of `style.go`
 (links are `colorLink`) and rebuild.
 
-## Build & install
+## Install
+
+One command (needs Go 1.26+):
 
 ```
+go install github.com/than/sidecar@latest
+```
+
+That installs `sidecar` into `$(go env GOPATH)/bin` (default `~/go/bin`) —
+make sure it's on your `PATH`. To install straight into a dir that already
+is, set `GOBIN`:
+
+```
+GOBIN=~/.local/bin go install github.com/than/sidecar@latest
+```
+
+### From source
+
+```
+git clone https://github.com/than/sidecar && cd sidecar
 go build -o sidecar
-ln -sf "$(pwd)/sidecar" ~/.local/bin/sidecar
+ln -sf "$(pwd)/sidecar" ~/.local/bin/sidecar   # any dir on your PATH
 ```
-
-`~/.local/bin` is on PATH; `/usr/local/bin` works too but needs sudo.
 
 ## Test
 
