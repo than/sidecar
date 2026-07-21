@@ -45,11 +45,10 @@ func runInit(args []string) int {
 
 	if _, err := os.Stat(abs); err == nil {
 		fmt.Printf("%s already exists — leaving it untouched.\n", target)
+	} else if err := scaffold(abs); err != nil {
+		fmt.Fprintln(os.Stderr, "sidecar init:", err)
+		return 1
 	} else {
-		if err := os.WriteFile(abs, []byte(starterTemplate), 0o644); err != nil {
-			fmt.Fprintln(os.Stderr, "sidecar init:", err)
-			return 1
-		}
 		fmt.Printf("Created %s\n", target)
 	}
 
@@ -57,6 +56,47 @@ func runInit(args []string) int {
 
 	fmt.Printf("\nWatch it:  sidecar %s\n", filepath.Base(abs))
 	return 0
+}
+
+// scaffold writes the starter template, leaving any existing file untouched.
+func scaffold(abs string) error {
+	if _, err := os.Stat(abs); err == nil {
+		return nil
+	}
+	return os.WriteFile(abs, []byte(starterTemplate), 0o644)
+}
+
+// offerCreate is the interactive prompt shown when the viewer is launched on
+// a file that doesn't exist yet and stdin is a terminal. On accept it
+// scaffolds the file and offers to git-exclude it; on decline the viewer
+// opens on its waiting screen. Non-interactive (piped) stdin skips straight
+// to waiting, so scripts aren't blocked.
+func offerCreate(abs string) {
+	if _, err := os.Stat(abs); err == nil {
+		return // already there
+	}
+	if !stdinIsTerminal() {
+		return
+	}
+	fmt.Printf("%s doesn't exist yet. Create it? [Y/n]: ", filepath.Base(abs))
+	switch readChoice() {
+	case "n", "no":
+		return
+	default: // Enter or "y" → create
+		if err := scaffold(abs); err != nil {
+			fmt.Fprintln(os.Stderr, "sidecar:", err)
+			return
+		}
+		fmt.Printf("Created %s\n", filepath.Base(abs))
+		offerGitExclude(abs)
+	}
+}
+
+// stdinIsTerminal reports whether stdin is an interactive terminal (not a
+// pipe or file), without pulling in a dependency.
+func stdinIsTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 // offerGitExclude prompts to keep the file out of git, when inside a work

@@ -45,6 +45,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	offerCreate(abs) // if missing and interactive, offer to scaffold before opening
+
 	p := tea.NewProgram(newModel(abs),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
