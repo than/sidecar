@@ -65,3 +65,7 @@ sections (🔴🟡🟢✅), bold, bullets, bare URLs, and a 300-line body for
 scroll testing.
 
 [glamour]: https://github.com/charmbracelet/glamour
+
+## License
+
+MIT — see [LICENSE](LICENSE).
