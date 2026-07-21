@@ -47,6 +47,22 @@ To tune colors, edit the `color…` constants at the top of `style.go`
 
 ## Install
 
+### Prebuilt binary (no Go needed)
+
+Grab the archive for your OS/arch from the
+[latest release](https://github.com/than/sidecar/releases/latest), extract,
+and move `sidecar` onto your `PATH`. For example, on Apple Silicon:
+
+```
+curl -sSL https://github.com/than/sidecar/releases/latest/download/sidecar_$(uname -s)_$(uname -m).tar.gz | tar xz
+mv sidecar ~/.local/bin/
+```
+
+(macOS `uname -m` reports `arm64`; Linux x86-64 reports `x86_64` — both
+match the release archive names.)
+
+### With Go
+
 One command (needs Go 1.26+):
 
 ```
