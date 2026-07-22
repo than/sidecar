@@ -11,9 +11,9 @@ sidecar init [file.md]   # scaffold the file, optionally keep it out of git
 ```
 
 `sidecar init` writes a starter `SIDECAR.md` and, inside a git repo, offers
-to keep it out of version control — via `.git/info/exclude` (local only,
-shared across worktrees) or `.gitignore` (committed) — since a personal
-scratchpad usually shouldn't be tracked.
+to keep it out of version control — via `.git/info/exclude` (uncommitted;
+the ignore rule applies in every worktree) or `.gitignore` (committed) —
+since a personal scratchpad usually shouldn't be tracked.
 
 ## What it does
 

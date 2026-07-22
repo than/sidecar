@@ -17,15 +17,19 @@ const starterTemplate = `# Sidecar
 Live scratchpad and review queue — edit this file, or let your agent
 maintain it, and sidecar re-renders on every save.
 
-## 🔴 Needs action
+## 🧠 Needs action
 
 - nothing yet
 
-## 🟡 In progress
+## 🚧 In progress
 
 - nothing yet
 
-## 🟢 Done
+## ✅ Done
+
+- nothing yet
+
+## 📦 Shipped
 
 - nothing yet
 `
@@ -124,7 +128,7 @@ func offerGitExclude(fileAbs string) {
 
 	fmt.Printf(`
 Keep %s out of git? (personal scratchpad, not project source)
-  [e] .git/info/exclude  — local only, shared across worktrees (recommended)
+  [e] .git/info/exclude  — uncommitted; ignored in every worktree (recommended)
   [g] .gitignore         — committed; applies to everyone who clones
   [n] no, leave it tracked
 Choice [E/g/n]: `, rel)

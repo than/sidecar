@@ -23,7 +23,7 @@ func TestInitScaffolds(t *testing.T) {
 	if !strings.HasPrefix(string(data), "# Sidecar") {
 		t.Errorf("scaffolded file missing header:\n%s", data)
 	}
-	for _, marker := range []string{"🔴", "🟡", "🟢"} {
+	for _, marker := range []string{"🧠", "🚧", "✅", "📦"} {
 		if !strings.Contains(string(data), marker) {
 			t.Errorf("template missing section marker %q", marker)
 		}
