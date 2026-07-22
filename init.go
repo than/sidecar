@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -57,9 +58,133 @@ func runInit(args []string) int {
 	}
 
 	offerGitExclude(abs)
+	offerClaudeHook(abs)
 
 	fmt.Printf("\nWatch it:  sidecar %s\n", filepath.Base(abs))
 	return 0
+}
+
+const claudeNoteMarker = "sidecar:review-queue"
+
+// claudeNote is the instruction appended to CLAUDE.md so Claude Code
+// sessions in the repo keep the queue updated — and know how to install and
+// launch sidecar. rel is the file path relative to the repo root.
+func claudeNote(rel string) string {
+	const tmpl = "<!-- sidecar:review-queue -->\n" +
+		"## Review queue (sidecar)\n\n" +
+		"Maintain `%[1]s` as a live review / TODO queue for the human. Sections:\n" +
+		"`## 🧠 Needs action`, `## 🚧 In progress`, `## ✅ Done`, `## 📦 Shipped`.\n" +
+		"Put bare URLs on their own line (keeps them clickable); keep entries short.\n\n" +
+		"The human watches it live with `sidecar %[1]s`. If sidecar isn't installed:\n" +
+		"`go install github.com/than/sidecar@latest`, or a prebuilt binary from\n" +
+		"https://github.com/than/sidecar/releases/latest\n" +
+		"<!-- /sidecar:review-queue -->\n"
+	return fmt.Sprintf(tmpl, rel)
+}
+
+// offerClaudeHook asks whether to wire the queue into Claude Code — a
+// CLAUDE.md note (the model authors the queue) and optionally a SessionStart
+// hook. Default is no, since it edits committed files. Interactive only.
+func offerClaudeHook(fileAbs string) {
+	if !stdinIsTerminal() {
+		return
+	}
+	dir := filepath.Dir(fileAbs)
+	root := dir
+	if r, ok := git(dir, "rev-parse", "--show-toplevel"); ok {
+		root = r
+	}
+	rel, err := filepath.Rel(root, fileAbs)
+	if err != nil {
+		rel = filepath.Base(fileAbs)
+	}
+
+	fmt.Print(`
+Help Claude keep this queue updated? (adds an instruction for Claude Code)
+  [c] CLAUDE.md note (recommended)
+  [b] CLAUDE.md note + a SessionStart hook (.claude/settings.json)
+  [n] no
+Choice [c/b/N]: `)
+	switch readChoice() {
+	case "c":
+		writeClaudeNote(root, rel)
+	case "b":
+		writeClaudeNote(root, rel)
+		writeSessionHook(root, rel)
+	default:
+		return
+	}
+}
+
+func writeClaudeNote(root, rel string) {
+	path := filepath.Join(root, "CLAUDE.md")
+	if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), claudeNoteMarker) {
+		fmt.Println("CLAUDE.md already has the sidecar note.")
+		return
+	}
+	prefix := ""
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		if !strings.HasSuffix(string(data), "\n") {
+			prefix = "\n\n"
+		} else if !strings.HasSuffix(string(data), "\n\n") {
+			prefix = "\n"
+		}
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "sidecar init:", err)
+		return
+	}
+	defer f.Close()
+	if _, err := f.WriteString(prefix + claudeNote(rel)); err != nil {
+		fmt.Fprintln(os.Stderr, "sidecar init:", err)
+		return
+	}
+	fmt.Println("Added a sidecar note to CLAUDE.md")
+}
+
+// writeSessionHook creates .claude/settings.json with a SessionStart
+// reminder when it doesn't exist yet. If the file already exists, it prints
+// the snippet instead of merging — never risk clobbering a user's settings.
+func writeSessionHook(root, rel string) {
+	path := filepath.Join(root, ".claude", "settings.json")
+	snippet := sessionHookJSON(rel)
+	if _, err := os.Stat(path); err == nil {
+		fmt.Printf(".claude/settings.json exists — add this SessionStart hook yourself:\n%s\n", snippet)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "sidecar init:", err)
+		return
+	}
+	if err := os.WriteFile(path, []byte(snippet), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "sidecar init:", err)
+		return
+	}
+	fmt.Println("Wrote .claude/settings.json with a SessionStart reminder.")
+}
+
+func sessionHookJSON(rel string) string {
+	msg := fmt.Sprintf("Maintain %s as the sidecar review queue; the human watches it with `sidecar %s`. Sections: 🧠 Needs action / 🚧 In progress / ✅ Done / 📦 Shipped.", rel, rel)
+	settings := map[string]any{
+		"hooks": map[string]any{
+			"SessionStart": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{"type": "command", "command": "echo " + shSingleQuote(msg)},
+					},
+				},
+			},
+		},
+	}
+	b, _ := json.MarshalIndent(settings, "", "  ")
+	return string(b) + "\n"
+}
+
+// shSingleQuote wraps s in single quotes for a POSIX shell, escaping any
+// embedded single quotes.
+func shSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // scaffold writes the starter template, leaving any existing file untouched.
@@ -93,6 +218,7 @@ func offerCreate(abs string) {
 		}
 		fmt.Printf("Created %s\n", filepath.Base(abs))
 		offerGitExclude(abs)
+		offerClaudeHook(abs)
 	}
 }
 

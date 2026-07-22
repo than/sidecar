@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,40 @@ func TestInitLeavesExistingFile(t *testing.T) {
 	data, _ := os.ReadFile(target)
 	if string(data) != "# Mine\n" {
 		t.Errorf("existing file overwritten: %q", data)
+	}
+}
+
+func TestWriteClaudeNoteAppendsAndDedupes(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte("# Existing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	writeClaudeNote(root, "SIDECAR.md")
+	data, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	got := string(data)
+	for _, want := range []string{"# Existing", claudeNoteMarker, "sidecar SIDECAR.md", "go install github.com/than/sidecar@latest", "🧠"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("CLAUDE.md missing %q:\n%s", want, got)
+		}
+	}
+
+	// Second call must not duplicate the note.
+	writeClaudeNote(root, "SIDECAR.md")
+	data, _ = os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	if n := strings.Count(string(data), "<!-- "+claudeNoteMarker+" -->"); n != 1 {
+		t.Errorf("note written %d times, want 1", n)
+	}
+}
+
+func TestSessionHookJSONValid(t *testing.T) {
+	out := sessionHookJSON("SIDECAR.md")
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("sessionHookJSON is not valid JSON: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "SessionStart") || !strings.Contains(out, "sidecar SIDECAR.md") {
+		t.Errorf("hook JSON missing expected fields:\n%s", out)
 	}
 }
 

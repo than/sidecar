@@ -18,7 +18,8 @@ var version = "dev"
 const help = `sidecar — live-updating markdown viewer for a terminal side pane
 
 usage: sidecar [file.md]         (default: ./SIDECAR.md)
-       sidecar init [file.md]    scaffold the file, optionally git-exclude it
+       sidecar init [file.md]    scaffold the file; offer to git-exclude it
+                                 and wire it into Claude Code
        sidecar --static [file]   render once to stdout and exit (no TUI)
 
 keys:  j/k, arrows, PgUp/PgDn, mouse wheel  scroll

@@ -13,7 +13,9 @@ sidecar init [file.md]   # scaffold the file, optionally keep it out of git
 `sidecar init` writes a starter `SIDECAR.md` and, inside a git repo, offers
 to keep it out of version control — via `.git/info/exclude` (uncommitted;
 the ignore rule applies in every worktree) or `.gitignore` (committed) —
-since a personal scratchpad usually shouldn't be tracked.
+since a personal scratchpad usually shouldn't be tracked. It then offers to
+add a note to `CLAUDE.md` (and optionally a `SessionStart` hook) so Claude
+Code sessions keep the queue updated and know how to install/launch sidecar.
 
 ## What it does
 
