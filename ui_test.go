@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func testModel(t *testing.T, path string) model {
@@ -127,6 +129,54 @@ func TestTopBottomKeys(t *testing.T) {
 	m = next.(model)
 	if m.vp.YOffset != 0 {
 		t.Error("g did not go to top")
+	}
+}
+
+// A live reload sets the flash, renders amber in the status bar, and clears
+// on flashOffMsg. No flash when content is unchanged.
+func TestReloadFlash(t *testing.T) {
+	const amber = "209;154;102" // colorHeading #D19A66 as truecolor bg
+	// lipgloss strips color when stdout isn't a TTY (as in tests); force
+	// truecolor so the flash's amber background is actually emitted.
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	path := filepath.Join(t.TempDir(), "SIDECAR.md")
+	writeFile(t, path, manyLines(20, "one"))
+	m := testModel(t, path)
+
+	if m.flash {
+		t.Fatal("flash set before any reload")
+	}
+
+	// Content changes → flash set, amber in the bar, flashOff cmd scheduled.
+	writeFile(t, path, manyLines(20, "two"))
+	next, cmd := m.Update(fileEventMsg{})
+	m = next.(model)
+	if !m.flash {
+		t.Fatal("flash not set after content change")
+	}
+	if cmd == nil {
+		t.Error("expected a flashOff command")
+	}
+	if !strings.Contains(m.statusBar(), amber) {
+		t.Errorf("status bar not amber while flashing:\n%q", m.statusBar())
+	}
+
+	// flashOffMsg clears it.
+	next, _ = m.Update(flashOffMsg{})
+	m = next.(model)
+	if m.flash {
+		t.Error("flash not cleared by flashOffMsg")
+	}
+	if strings.Contains(m.statusBar(), amber) {
+		t.Error("status bar still amber after flash cleared")
+	}
+
+	// Same content again → no flash.
+	next, _ = m.Update(fileEventMsg{})
+	m = next.(model)
+	if m.flash {
+		t.Error("flash set without a content change")
 	}
 }
 

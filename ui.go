@@ -18,6 +18,15 @@ type fileEventMsg struct{}
 // tickMsg drives the "updated Ns ago" clock and the stat-based fallback.
 type tickMsg time.Time
 
+// flashOffMsg clears the post-reload status-bar highlight.
+type flashOffMsg struct{}
+
+const flashDuration = 450 * time.Millisecond
+
+func flashOff() tea.Cmd {
+	return tea.Tick(flashDuration, func(time.Time) tea.Msg { return flashOffMsg{} })
+}
+
 type model struct {
 	path string
 
@@ -35,6 +44,9 @@ type model struct {
 	// file and reloads on mismatch, a fallback for missed fsnotify events.
 	lastMod  time.Time
 	lastSize int64
+
+	// flash briefly highlights the status bar right after a live reload.
+	flash bool
 }
 
 func newModel(path string) model {
@@ -79,19 +91,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case fileEventMsg:
-		m.reload(false)
+		if m.reload(false) {
+			m.flash = true
+			return m, flashOff()
+		}
 		return m, nil
 
 	case tickMsg:
 		// Stat fallback: catch changes fsnotify missed.
+		changed := false
 		if st, err := os.Stat(m.path); err != nil {
 			if !m.fileMissing {
-				m.reload(false)
+				changed = m.reload(false)
 			}
 		} else if m.fileMissing || !st.ModTime().Equal(m.lastMod) || st.Size() != m.lastSize {
-			m.reload(false)
+			changed = m.reload(false)
+		}
+		if changed {
+			m.flash = true
+			return m, tea.Batch(tick(), flashOff())
 		}
 		return m, tick()
+
+	case flashOffMsg:
+		m.flash = false
+		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -101,10 +125,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // reload re-reads the file and re-renders, preserving the scroll position
 // (clamped if the content shrank). Rendering happens off-screen into a
-// string; the viewport swap is a single frame, so no flicker.
-func (m *model) reload(force bool) {
+// string; the viewport swap is a single frame, so no flicker. It returns
+// true when the file's content actually changed (used to trigger the reload
+// flash) — a forced re-render at the same content (e.g. resize) returns
+// false so resizing doesn't flash.
+func (m *model) reload(force bool) (changed bool) {
 	if !m.ready {
-		return
+		return false
 	}
 	data, err := os.ReadFile(m.path)
 	if err != nil {
@@ -118,7 +145,7 @@ func (m *model) reload(force bool) {
 			m.vp.SetContent(fmt.Sprintf("\n  Error reading %s:\n  %v", m.path, err))
 		}
 		m.vp.GotoTop()
-		return
+		return false
 	}
 	if st, err := os.Stat(m.path); err == nil {
 		m.lastMod, m.lastSize = st.ModTime(), st.Size()
@@ -127,8 +154,9 @@ func (m *model) reload(force bool) {
 	m.loadErr = nil
 
 	raw := string(data)
-	if !force && raw == m.raw {
-		return
+	contentChanged := raw != m.raw
+	if !force && !contentChanged {
+		return false
 	}
 	m.raw = raw
 
@@ -136,12 +164,13 @@ func (m *model) reload(force bool) {
 	if err != nil {
 		m.loadErr = err
 		m.vp.SetContent(fmt.Sprintf("\n  Render error: %v", err))
-		return
+		return false
 	}
 
 	offset := m.vp.YOffset // preserve scroll; if at top this is 0 and stays 0
 	m.vp.SetContent(rendered)
 	m.vp.SetYOffset(offset) // viewport clamps to the new content height
+	return contentChanged
 }
 
 // renderWidth is the markdown wrap width: pane width minus 2, never wider
@@ -158,6 +187,12 @@ var (
 			Foreground(lipgloss.Color(colorStatusHi)).
 			Background(lipgloss.Color(colorStatusBg)).
 			Bold(true)
+	// statusFlashStyle briefly replaces the filename badge right after a
+	// live reload — black on amber, so a change catches the eye.
+	statusFlashStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(colorH1Fg)).
+				Background(lipgloss.Color(colorHeading)).
+				Bold(true)
 
 	waitBadgeStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorH1Fg)).
@@ -217,7 +252,11 @@ func (m model) statusBar() string {
 		pad = max(0, m.width-visibleWidth(left)-visibleWidth(info)-visibleWidth(pct))
 	}
 
-	return statusNameStyle.Render(left) +
+	nameStyle := statusNameStyle
+	if m.flash {
+		nameStyle = statusFlashStyle
+	}
+	return nameStyle.Render(left) +
 		statusStyle.Render(info+strings.Repeat(" ", pad)+pct)
 }
 
