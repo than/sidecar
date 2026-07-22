@@ -22,7 +22,7 @@ usage: sidecar [file.md]         (default: ./SIDECAR.md)
                                  and wire it into Claude Code
        sidecar --static [file]   render once to stdout and exit (no TUI)
 
-keys:  j/k, arrows, PgUp/PgDn, mouse wheel  scroll
+keys:  j/k, arrows, PgUp/PgDn                scroll
        g / G                                top / bottom
        r                                    force reload
        q                                    quit
@@ -60,7 +60,8 @@ func main() {
 
 	p := tea.NewProgram(newModel(abs),
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
+		// No mouse capture: keeps the terminal's native text selection and
+		// clickable links working. Scroll with the keyboard (see keys below).
 	)
 	go watchFile(abs, p.Send)
 

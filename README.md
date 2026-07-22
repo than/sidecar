@@ -23,8 +23,9 @@ Code sessions keep the queue updated and know how to install/launch sidecar.
   changes (fsnotify on the parent directory, 100 ms debounce — survives
   atomic rename-swaps, deletes, and recreates; waits politely if the file
   doesn't exist yet).
-- Scrolls: mouse wheel, `j`/`k`, arrows, `PgUp`/`PgDn`, `g`/`G` for
-  top/bottom. Scroll position is preserved across reloads.
+- Scrolls: `j`/`k`, arrows, `PgUp`/`PgDn`, `g`/`G` for top/bottom. Scroll
+  position is preserved across reloads. (No mouse capture, so your
+  terminal's native text selection and clickable links keep working.)
 - `r` forces a reload, `q` quits.
 - Re-renders on terminal resize at pane width − 2 — it never renders wider
   than the pane.
