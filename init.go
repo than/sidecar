@@ -83,8 +83,9 @@ func claudeNote(rel string) string {
 }
 
 // offerClaudeHook asks whether to wire the queue into Claude Code — a
-// CLAUDE.md note (the model authors the queue) and optionally a SessionStart
-// hook. Default is no, since it edits committed files. Interactive only.
+// CLAUDE.md note (the model authors the queue) and optionally a per-turn
+// reconcile hook. Default is no, since it edits committed files. Interactive
+// only.
 func offerClaudeHook(fileAbs string) {
 	if !stdinIsTerminal() {
 		return
@@ -101,8 +102,8 @@ func offerClaudeHook(fileAbs string) {
 
 	fmt.Print(`
 Help Claude keep this queue updated? (adds an instruction for Claude Code)
-  [c] CLAUDE.md note (recommended)
-  [b] CLAUDE.md note + a SessionStart hook (.claude/settings.json)
+  [c] CLAUDE.md note only
+  [b] CLAUDE.md note + per-turn UserPromptSubmit reconcile hook (recommended)
   [n] no
 Choice [c/b/N]: `)
 	switch readChoice() {
@@ -110,7 +111,7 @@ Choice [c/b/N]: `)
 		writeClaudeNote(root, rel)
 	case "b":
 		writeClaudeNote(root, rel)
-		writeSessionHook(root, rel)
+		writeReconcileHook(root, rel)
 	default:
 		return
 	}
@@ -143,42 +144,147 @@ func writeClaudeNote(root, rel string) {
 	fmt.Println("Added a sidecar note to CLAUDE.md")
 }
 
-// writeSessionHook creates .claude/settings.json with a SessionStart
-// reminder when it doesn't exist yet. If the file already exists, it prints
-// the snippet instead of merging — never risk clobbering a user's settings.
-func writeSessionHook(root, rel string) {
-	path := filepath.Join(root, ".claude", "settings.json")
-	snippet := sessionHookJSON(rel)
-	if _, err := os.Stat(path); err == nil {
-		fmt.Printf(".claude/settings.json exists — add this SessionStart hook yourself:\n%s\n", snippet)
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		fmt.Fprintln(os.Stderr, "sidecar init:", err)
-		return
-	}
-	if err := os.WriteFile(path, []byte(snippet), 0o644); err != nil {
-		fmt.Fprintln(os.Stderr, "sidecar init:", err)
-		return
-	}
-	fmt.Println("Wrote .claude/settings.json with a SessionStart reminder.")
+// hookSentinel is a phrase embedded in the reconcile reminder so a re-run of
+// `sidecar init` can find and replace a prior sidecar hook — including an
+// older SessionStart one — instead of stacking duplicates.
+const hookSentinel = "the sidecar review queue"
+
+// reconcileMessage is the per-turn reminder the hook echoes. It's conditional
+// ("if your last turn changed task state") so it costs almost nothing on
+// turns that don't touch the queue.
+func reconcileMessage(rel string) string {
+	return fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `sidecar %s`. Sections: 🧠 Needs action / 🚧 In progress / ✅ Done / 📦 Shipped.", rel, hookSentinel, rel)
 }
 
-func sessionHookJSON(rel string) string {
-	msg := fmt.Sprintf("Maintain %s as the sidecar review queue; the human watches it with `sidecar %s`. Sections: 🧠 Needs action / 🚧 In progress / ✅ Done / 📦 Shipped.", rel, rel)
-	settings := map[string]any{
-		"hooks": map[string]any{
-			"SessionStart": []any{
-				map[string]any{
-					"hooks": []any{
-						map[string]any{"type": "command", "command": "echo " + shSingleQuote(msg)},
-					},
-				},
-			},
+// reconcileHookEntry is a single Claude Code hook entry (one matcher, one
+// command) that echoes the reminder.
+func reconcileHookEntry(rel string) map[string]any {
+	return map[string]any{
+		"hooks": []any{
+			map[string]any{"type": "command", "command": "echo " + shSingleQuote(reconcileMessage(rel))},
 		},
 	}
-	b, _ := json.MarshalIndent(settings, "", "  ")
-	return string(b) + "\n"
+}
+
+// writeReconcileHook installs a UserPromptSubmit hook — the only hook type
+// that fires every turn, so the queue actually stays current. It merges into
+// an existing .claude/settings.json, replacing any prior sidecar hook
+// (including an older SessionStart one) so re-running `sidecar init` upgrades
+// cleanly. If the file exists but isn't valid JSON or has a shape it can't
+// safely edit, it prints the snippet instead of risking a clobber.
+func writeReconcileHook(root, rel string) {
+	path := filepath.Join(root, ".claude", "settings.json")
+	entry := reconcileHookEntry(rel)
+
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		settings := map[string]any{"hooks": map[string]any{"UserPromptSubmit": []any{entry}}}
+		if err := writeSettings(path, settings); err != nil {
+			fmt.Fprintln(os.Stderr, "sidecar init:", err)
+			return
+		}
+		fmt.Println("Wrote .claude/settings.json with a per-turn reconcile hook.")
+		return
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "sidecar init:", err)
+		return
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil || settings == nil {
+		fmt.Printf(".claude/settings.json isn't valid JSON — add this hook yourself:\n%s\n", snippetJSON(entry))
+		return
+	}
+	if !mergeReconcileHook(settings, entry) {
+		fmt.Printf(".claude/settings.json has an unexpected shape — add this hook yourself:\n%s\n", snippetJSON(entry))
+		return
+	}
+	if err := writeSettings(path, settings); err != nil {
+		fmt.Fprintln(os.Stderr, "sidecar init:", err)
+		return
+	}
+	fmt.Println("Updated .claude/settings.json with a per-turn reconcile hook.")
+}
+
+// mergeReconcileHook strips any prior sidecar-owned hook entries from every
+// event array, then appends entry under UserPromptSubmit. It mutates settings
+// in place and returns false if settings has a "hooks" value it can't safely
+// edit (caller then prints a snippet rather than clobber the file).
+func mergeReconcileHook(settings, entry map[string]any) bool {
+	hooksAny, ok := settings["hooks"]
+	if !ok {
+		settings["hooks"] = map[string]any{"UserPromptSubmit": []any{entry}}
+		return true
+	}
+	hooks, ok := hooksAny.(map[string]any)
+	if !ok {
+		return false
+	}
+	// Remove prior sidecar hooks across every event (upgrades old SessionStart).
+	for event, arrAny := range hooks {
+		arr, ok := arrAny.([]any)
+		if !ok {
+			continue
+		}
+		kept := make([]any, 0, len(arr))
+		for _, e := range arr {
+			if !isSidecarHook(e) {
+				kept = append(kept, e)
+			}
+		}
+		if len(kept) == 0 {
+			delete(hooks, event)
+		} else {
+			hooks[event] = kept
+		}
+	}
+	ups, _ := hooks["UserPromptSubmit"].([]any)
+	hooks["UserPromptSubmit"] = append(ups, entry)
+	return true
+}
+
+// isSidecarHook reports whether a hook entry is one sidecar wrote, detected by
+// the sentinel phrase in its command string.
+func isSidecarHook(entry any) bool {
+	m, ok := entry.(map[string]any)
+	if !ok {
+		return false
+	}
+	inner, ok := m["hooks"].([]any)
+	if !ok {
+		return false
+	}
+	for _, h := range inner {
+		hm, ok := h.(map[string]any)
+		if !ok {
+			continue
+		}
+		if cmd, ok := hm["command"].(string); ok && strings.Contains(cmd, hookSentinel) {
+			return true
+		}
+	}
+	return false
+}
+
+// writeSettings marshals settings to path, creating parent dirs as needed.
+func writeSettings(path string, settings map[string]any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o644)
+}
+
+// snippetJSON renders just the hook fragment for the user to paste when we
+// won't touch their settings file.
+func snippetJSON(entry map[string]any) string {
+	frag := map[string]any{"hooks": map[string]any{"UserPromptSubmit": []any{entry}}}
+	b, _ := json.MarshalIndent(frag, "", "  ")
+	return string(b)
 }
 
 // shSingleQuote wraps s in single quotes for a POSIX shell, escaping any

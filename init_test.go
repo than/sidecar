@@ -70,14 +70,101 @@ func TestWriteClaudeNoteAppendsAndDedupes(t *testing.T) {
 	}
 }
 
-func TestSessionHookJSONValid(t *testing.T) {
-	out := sessionHookJSON("SIDECAR.md")
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
-		t.Fatalf("sessionHookJSON is not valid JSON: %v\n%s", err, out)
+// A fresh project (no settings.json) gets a UserPromptSubmit hook written.
+func TestReconcileHookFreshFile(t *testing.T) {
+	root := t.TempDir()
+	writeReconcileHook(root, "SIDECAR.md")
+
+	data, err := os.ReadFile(filepath.Join(root, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(out, "SessionStart") || !strings.Contains(out, "sidecar SIDECAR.md") {
-		t.Errorf("hook JSON missing expected fields:\n%s", out)
+	var s map[string]any
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatalf("settings.json not valid JSON: %v\n%s", err, data)
+	}
+	hooks := s["hooks"].(map[string]any)
+	if _, ok := hooks["UserPromptSubmit"]; !ok {
+		t.Errorf("no UserPromptSubmit hook:\n%s", data)
+	}
+	if _, ok := hooks["SessionStart"]; ok {
+		t.Errorf("unexpected SessionStart hook:\n%s", data)
+	}
+	if !strings.Contains(string(data), "sidecar SIDECAR.md") {
+		t.Errorf("hook missing sidecar reference:\n%s", data)
+	}
+}
+
+// Merging preserves a user's own hooks, upgrades an old sidecar SessionStart
+// hook to UserPromptSubmit, and is idempotent across re-runs.
+func TestReconcileHookMergesAndUpgrades(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "settings.json")
+
+	// Pre-existing settings: a user hook plus an old sidecar SessionStart hook.
+	existing := map[string]any{
+		"model": "opus",
+		"hooks": map[string]any{
+			"SessionStart": []any{
+				map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "echo keep-me"}}},
+				map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "echo Maintain SIDECAR.md as " + hookSentinel}}},
+			},
+		},
+	}
+	b, _ := json.MarshalIndent(existing, "", "  ")
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	writeReconcileHook(root, "SIDECAR.md")
+	writeReconcileHook(root, "SIDECAR.md") // second run must not duplicate
+
+	data, _ := os.ReadFile(path)
+	var s map[string]any
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatalf("settings.json not valid JSON: %v\n%s", err, data)
+	}
+	if s["model"] != "opus" {
+		t.Errorf("unrelated key 'model' lost:\n%s", data)
+	}
+	if !strings.Contains(string(data), "keep-me") {
+		t.Errorf("user's own hook was dropped:\n%s", data)
+	}
+	hooks := s["hooks"].(map[string]any)
+	if _, ok := hooks["SessionStart"]; !ok {
+		t.Errorf("user's SessionStart hook removed entirely:\n%s", data)
+	}
+	ups, ok := hooks["UserPromptSubmit"].([]any)
+	if !ok || len(ups) != 1 {
+		t.Fatalf("want exactly 1 UserPromptSubmit entry, got:\n%s", data)
+	}
+	// The old sidecar SessionStart hook should be gone (only keep-me remains).
+	if n := strings.Count(string(data), hookSentinel); n != 1 {
+		t.Errorf("sentinel appears %d times, want 1 (old hook not replaced):\n%s", n, data)
+	}
+}
+
+// A settings.json that isn't valid JSON is left untouched.
+func TestReconcileHookLeavesInvalidJSON(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	writeReconcileHook(root, "SIDECAR.md")
+
+	data, _ := os.ReadFile(path)
+	if string(data) != "{not json" {
+		t.Errorf("invalid settings.json was modified: %q", data)
 	}
 }
 
