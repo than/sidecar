@@ -1,4 +1,4 @@
-# sidecar
+# 🚗 Sidecar
 
 Sidecar is your AI's TODO list and scratchpad for its human companion: a
 live-updating, scrollable markdown viewer for a narrow terminal pane. Built
