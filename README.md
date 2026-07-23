@@ -2,13 +2,44 @@
 
 Sidecar is your AI's TODO list and scratchpad for its human companion: a
 live-updating, scrollable markdown viewer for a narrow terminal pane. Built
-to sit beside a Claude Code session and watch the `REVIEW.md` queue Claude
+to sit beside a Claude Code session and watch the `SIDECAR.md` queue Claude
 maintains during long working sessions.
 
 ```
 sidecar [file.md]        # default: ./SIDECAR.md
 sidecar init [file.md]   # scaffold the file, optionally keep it out of git
 ```
+
+## Why — the two-pane workflow
+
+During a long agent session the interesting status — what's done, what's
+blocked, what shipped — scrolls off the top of the transcript. Sidecar
+pins it in place.
+
+Run it **beside your Claude Code session, in a split terminal**: Claude
+edits `SIDECAR.md` in one pane, sidecar renders it live in the pane next to
+it. You get a calm, always-current dashboard of the work while the busy
+transcript churns on the other side.
+
+```
+┌────────────────────────┬─────────────────────┐
+│  Claude Code            │  sidecar SIDECAR.md │
+│  (edits SIDECAR.md,     │  🧠 Needs action    │
+│   transcript scrolls)   │  🚧 In progress     │
+│                         │  ✅ Done            │
+│                         │  📦 Shipped         │
+└────────────────────────┴─────────────────────┘
+```
+
+Any split-pane setup works — [Supacode], tmux, or your terminal's native
+splits (Ghostty, iTerm2, WezTerm). The trick to keeping the queue *current*
+is the `UserPromptSubmit` hook `sidecar init` offers (option `[b]`): it
+nudges Claude to reconcile the file every turn, so the dashboard never goes
+stale. See [Wiring it into Claude Code](#wiring-it-into-claude-code) below.
+
+[Supacode]: https://supacode.sh
+
+## Wiring it into Claude Code
 
 `sidecar init` writes a starter `SIDECAR.md` and, inside a git repo, offers
 to keep it out of version control — via `.git/info/exclude` (uncommitted;
