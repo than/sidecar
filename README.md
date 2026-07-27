@@ -26,6 +26,7 @@ transcript churns on the other side.
 │  Claude Code            │  sidecar SIDECAR.md │
 │  (edits SIDECAR.md,     │  🧠 Needs action    │
 │   transcript scrolls)   │  🚧 In progress     │
+│                         │  🚘 Parked          │
 │                         │  ✅ Done            │
 │                         │  📦 Shipped         │
 └────────────────────────┴─────────────────────┘

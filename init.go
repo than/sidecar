@@ -15,14 +15,24 @@ import (
 // clickable, emoji markers scan fast.
 const starterTemplate = `# Sidecar
 
-Live scratchpad and review queue — edit this file, or let your agent
-maintain it, and sidecar re-renders on every save.
+<!--
+Sidecar review queue — agent: keep this current as you work.
+· Keep the title and section headers as-is; only add, move, or remove items.
+· Move each item to the section matching its state.
+· 🚘 Parked = deferred (not now, not dropped).
+· One line per item where you can; bare URLs on their own line stay clickable.
+· Prune 🧠/🚧 as things move; let ✅/📦 accumulate as a log.
+-->
 
 ## 🧠 Needs action
 
 - nothing yet
 
 ## 🚧 In progress
+
+- nothing yet
+
+## 🚘 Parked
 
 - nothing yet
 
@@ -73,7 +83,7 @@ func claudeNote(rel string) string {
 	const tmpl = "<!-- sidecar:review-queue -->\n" +
 		"## Review queue (sidecar)\n\n" +
 		"Maintain `%[1]s` as a live review / TODO queue for the human. Sections:\n" +
-		"`## 🧠 Needs action`, `## 🚧 In progress`, `## ✅ Done`, `## 📦 Shipped`.\n" +
+		"`## 🧠 Needs action`, `## 🚧 In progress`, `## 🚘 Parked`, `## ✅ Done`, `## 📦 Shipped`.\n" +
 		"Put bare URLs on their own line (keeps them clickable); keep entries short.\n\n" +
 		"The human watches it live with `sidecar %[1]s`. If sidecar isn't installed:\n" +
 		"`go install github.com/than/sidecar@latest`, or a prebuilt binary from\n" +
@@ -153,7 +163,7 @@ const hookSentinel = "the sidecar review queue"
 // ("if your last turn changed task state") so it costs almost nothing on
 // turns that don't touch the queue.
 func reconcileMessage(rel string) string {
-	return fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `sidecar %s`. Sections: 🧠 Needs action / 🚧 In progress / ✅ Done / 📦 Shipped.", rel, hookSentinel, rel)
+	return fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `sidecar %s`. Sections: 🧠 Needs action / 🚧 In progress / 🚘 Parked / ✅ Done / 📦 Shipped.", rel, hookSentinel, rel)
 }
 
 // reconcileHookEntry is a single Claude Code hook entry (one matcher, one
