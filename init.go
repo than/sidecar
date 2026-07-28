@@ -20,6 +20,7 @@ Sidecar review queue — agent: keep this current as you work.
 · Keep the title and section headers as-is; only add, move, or remove items.
 · Move each item to the section matching its state.
 · 🚘 Parked = deferred (not now, not dropped).
+· ✅ Done = merged, not yet released; 📦 Shipped = released (tag the version).
 · One line per item where you can; bare URLs on their own line stay clickable.
 · Prune 🧠/🚧 as things move; let ✅/📦 accumulate as a log.
 -->
