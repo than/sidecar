@@ -10,42 +10,6 @@ import (
 	"strings"
 )
 
-// starterTemplate is written by `sidecar init` when the target doesn't yet
-// exist. Kept generic and format-forward: bare URLs on their own line stay
-// clickable, emoji markers scan fast.
-const starterTemplate = `# Sidecar
-
-<!--
-Sidecar review queue — agent: keep this current as you work.
-· Keep the title and section headers as-is; only add, move, or remove items.
-· Move each item to the section matching its state.
-· 🚘 Parked = deferred (not now, not dropped).
-· ✅ Done = merged, not yet released; 📦 Shipped = released (tag the version).
-· One line per item where you can; bare URLs on their own line stay clickable.
-· Prune 🧠/🚧 as things move; let ✅/📦 accumulate as a log.
--->
-
-## 🧠 Needs action
-
-- nothing yet
-
-## 🚧 In progress
-
-- nothing yet
-
-## 🚘 Parked
-
-- nothing yet
-
-## ✅ Done
-
-- nothing yet
-
-## 📦 Shipped
-
-- nothing yet
-`
-
 // runInit scaffolds the target file and offers to keep it out of git.
 // Returns a process exit code.
 func runInit(args []string) int {
@@ -61,7 +25,7 @@ func runInit(args []string) int {
 
 	if _, err := os.Stat(abs); err == nil {
 		fmt.Printf("%s already exists — leaving it untouched.\n", target)
-	} else if err := scaffold(abs); err != nil {
+	} else if err := scaffold(abs, defaultSections()); err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
 		return 1
 	} else {
@@ -304,12 +268,13 @@ func shSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// scaffold writes the starter template, leaving any existing file untouched.
-func scaffold(abs string) error {
+// scaffold writes the starter template for the chosen sections, leaving any
+// existing file untouched.
+func scaffold(abs string, sections []Section) error {
 	if _, err := os.Stat(abs); err == nil {
 		return nil
 	}
-	return os.WriteFile(abs, []byte(starterTemplate), 0o644)
+	return os.WriteFile(abs, []byte(renderTemplate(sections)), 0o644)
 }
 
 // offerCreate is the interactive prompt shown when the viewer is launched on
@@ -329,7 +294,7 @@ func offerCreate(abs string) {
 	case "n", "no":
 		return
 	default: // Enter or "y" → create
-		if err := scaffold(abs); err != nil {
+		if err := scaffold(abs, defaultSections()); err != nil {
 			fmt.Fprintln(os.Stderr, "sidecar:", err)
 			return
 		}

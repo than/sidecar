@@ -37,3 +37,26 @@ func defaultSections() []Section {
 		{"📦", "Shipped", "released"},
 	}
 }
+
+// renderTemplate builds the starter file body for the chosen sections. Bare
+// URLs on their own line stay clickable; hintless sections are omitted from
+// the comment's "= meaning" list.
+func renderTemplate(sections []Section) string {
+	var b strings.Builder
+	b.WriteString("# Sidecar\n\n")
+	b.WriteString("<!--\n")
+	b.WriteString("Sidecar review queue — agent: keep this current as you work.\n")
+	b.WriteString("· Keep the title and section headers as-is; only add, move, or remove items.\n")
+	b.WriteString("· Move each item to the section matching its state.\n")
+	for _, s := range sections {
+		if s.Hint != "" {
+			b.WriteString("· " + s.label() + " = " + s.Hint + "\n")
+		}
+	}
+	b.WriteString("· One line per item where you can; bare URLs on their own line stay clickable.\n")
+	b.WriteString("-->\n\n")
+	for _, s := range sections {
+		b.WriteString(s.Header() + "\n\n- nothing yet\n\n")
+	}
+	return strings.TrimRight(b.String(), "\n") + "\n"
+}
