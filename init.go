@@ -8,43 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/term"
 )
-
-// starterTemplate is written by `sidecar init` when the target doesn't yet
-// exist. Kept generic and format-forward: bare URLs on their own line stay
-// clickable, emoji markers scan fast.
-const starterTemplate = `# Sidecar
-
-<!--
-Sidecar review queue — agent: keep this current as you work.
-· Keep the title and section headers as-is; only add, move, or remove items.
-· Move each item to the section matching its state.
-· 🚘 Parked = deferred (not now, not dropped).
-· ✅ Done = merged, not yet released; 📦 Shipped = released (tag the version).
-· One line per item where you can; bare URLs on their own line stay clickable.
-· Prune 🧠/🚧 as things move; let ✅/📦 accumulate as a log.
--->
-
-## 🧠 Needs action
-
-- nothing yet
-
-## 🚧 In progress
-
-- nothing yet
-
-## 🚘 Parked
-
-- nothing yet
-
-## ✅ Done
-
-- nothing yet
-
-## 📦 Shipped
-
-- nothing yet
-`
 
 // runInit scaffolds the target file and offers to keep it out of git.
 // Returns a process exit code.
@@ -59,20 +25,37 @@ func runInit(args []string) int {
 		return 1
 	}
 
+	sections := defaultSections()
 	if _, err := os.Stat(abs); err == nil {
 		fmt.Printf("%s already exists — leaving it untouched.\n", target)
-	} else if err := scaffold(abs); err != nil {
-		fmt.Fprintln(os.Stderr, "sidecar init:", err)
-		return 1
 	} else {
+		if interactiveTTY() {
+			picked, interrupted := pickSections(defaultSections())
+			if interrupted {
+				fmt.Fprintln(os.Stderr, "sidecar init: canceled — nothing written.")
+				return 1
+			}
+			sections = picked
+		}
+		if err := scaffold(abs, sections); err != nil {
+			fmt.Fprintln(os.Stderr, "sidecar init:", err)
+			return 1
+		}
 		fmt.Printf("Created %s\n", target)
 	}
 
 	offerGitExclude(abs)
-	offerClaudeHook(abs)
+	offerClaudeHook(abs, sections)
 
 	fmt.Printf("\nWatch it:  sidecar %s\n", filepath.Base(abs))
 	return 0
+}
+
+// interactiveTTY reports whether both stdin and stdout are terminals — the
+// condition for running the full-screen picker. (The plain readChoice prompts
+// only need stdin.)
+func interactiveTTY() bool {
+	return stdinIsTerminal() && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
 const claudeNoteMarker = "sidecar:review-queue"
@@ -80,24 +63,32 @@ const claudeNoteMarker = "sidecar:review-queue"
 // claudeNote is the instruction appended to CLAUDE.md so Claude Code
 // sessions in the repo keep the queue updated — and know how to install and
 // launch sidecar. rel is the file path relative to the repo root.
-func claudeNote(rel string) string {
+func claudeNote(rel string, sections []Section) string {
+	var secLines strings.Builder
+	for _, s := range sections {
+		secLines.WriteString("- `" + s.Header() + "`")
+		if s.Hint != "" {
+			secLines.WriteString(" — " + s.Hint)
+		}
+		secLines.WriteString("\n")
+	}
 	const tmpl = "<!-- sidecar:review-queue -->\n" +
 		"## Review queue (sidecar)\n\n" +
-		"Maintain `%[1]s` as a live review / TODO queue for the human. Sections:\n" +
-		"`## 🧠 Needs action`, `## 🚧 In progress`, `## 🚘 Parked`, `## ✅ Done`, `## 📦 Shipped`.\n" +
-		"Put bare URLs on their own line (keeps them clickable); keep entries short.\n\n" +
+		"Maintain `%[1]s` as a live review / TODO queue for the human. Sections:\n\n" +
+		"%[2]s" +
+		"\nPut bare URLs on their own line (keeps them clickable); keep entries short.\n\n" +
 		"The human watches it live with `sidecar %[1]s`. If sidecar isn't installed:\n" +
 		"`go install github.com/than/sidecar@latest`, or a prebuilt binary from\n" +
 		"https://github.com/than/sidecar/releases/latest\n" +
 		"<!-- /sidecar:review-queue -->\n"
-	return fmt.Sprintf(tmpl, rel)
+	return fmt.Sprintf(tmpl, rel, secLines.String())
 }
 
 // offerClaudeHook asks whether to wire the queue into Claude Code — a
 // CLAUDE.md note (the model authors the queue) and optionally a per-turn
 // reconcile hook. Default is no, since it edits committed files. Interactive
 // only.
-func offerClaudeHook(fileAbs string) {
+func offerClaudeHook(fileAbs string, sections []Section) {
 	if !stdinIsTerminal() {
 		return
 	}
@@ -119,16 +110,16 @@ Help Claude keep this queue updated? (adds an instruction for Claude Code)
 Choice [c/b/N]: `)
 	switch readChoice() {
 	case "c":
-		writeClaudeNote(root, rel)
+		writeClaudeNote(root, rel, sections)
 	case "b":
-		writeClaudeNote(root, rel)
-		writeReconcileHook(root, rel)
+		writeClaudeNote(root, rel, sections)
+		writeReconcileHook(root, rel, sections)
 	default:
 		return
 	}
 }
 
-func writeClaudeNote(root, rel string) {
+func writeClaudeNote(root, rel string, sections []Section) {
 	path := filepath.Join(root, "CLAUDE.md")
 	if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), claudeNoteMarker) {
 		fmt.Println("CLAUDE.md already has the sidecar note.")
@@ -148,7 +139,7 @@ func writeClaudeNote(root, rel string) {
 		return
 	}
 	defer f.Close()
-	if _, err := f.WriteString(prefix + claudeNote(rel)); err != nil {
+	if _, err := f.WriteString(prefix + claudeNote(rel, sections)); err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
 		return
 	}
@@ -163,16 +154,20 @@ const hookSentinel = "the sidecar review queue"
 // reconcileMessage is the per-turn reminder the hook echoes. It's conditional
 // ("if your last turn changed task state") so it costs almost nothing on
 // turns that don't touch the queue.
-func reconcileMessage(rel string) string {
-	return fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `sidecar %s`. Sections: 🧠 Needs action / 🚧 In progress / 🚘 Parked / ✅ Done / 📦 Shipped.", rel, hookSentinel, rel)
+func reconcileMessage(rel string, sections []Section) string {
+	labels := make([]string, len(sections))
+	for i, s := range sections {
+		labels[i] = s.label()
+	}
+	return fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `sidecar %s`. Sections: %s.", rel, hookSentinel, rel, strings.Join(labels, " / "))
 }
 
 // reconcileHookEntry is a single Claude Code hook entry (one matcher, one
 // command) that echoes the reminder.
-func reconcileHookEntry(rel string) map[string]any {
+func reconcileHookEntry(rel string, sections []Section) map[string]any {
 	return map[string]any{
 		"hooks": []any{
-			map[string]any{"type": "command", "command": "echo " + shSingleQuote(reconcileMessage(rel))},
+			map[string]any{"type": "command", "command": "echo " + shSingleQuote(reconcileMessage(rel, sections))},
 		},
 	}
 }
@@ -183,9 +178,9 @@ func reconcileHookEntry(rel string) map[string]any {
 // (including an older SessionStart one) so re-running `sidecar init` upgrades
 // cleanly. If the file exists but isn't valid JSON or has a shape it can't
 // safely edit, it prints the snippet instead of risking a clobber.
-func writeReconcileHook(root, rel string) {
+func writeReconcileHook(root, rel string, sections []Section) {
 	path := filepath.Join(root, ".claude", "settings.json")
-	entry := reconcileHookEntry(rel)
+	entry := reconcileHookEntry(rel, sections)
 
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -304,12 +299,13 @@ func shSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// scaffold writes the starter template, leaving any existing file untouched.
-func scaffold(abs string) error {
+// scaffold writes the starter template for the chosen sections, leaving any
+// existing file untouched.
+func scaffold(abs string, sections []Section) error {
 	if _, err := os.Stat(abs); err == nil {
 		return nil
 	}
-	return os.WriteFile(abs, []byte(starterTemplate), 0o644)
+	return os.WriteFile(abs, []byte(renderTemplate(sections)), 0o644)
 }
 
 // offerCreate is the interactive prompt shown when the viewer is launched on
@@ -329,13 +325,21 @@ func offerCreate(abs string) {
 	case "n", "no":
 		return
 	default: // Enter or "y" → create
-		if err := scaffold(abs); err != nil {
+		sections := defaultSections()
+		if interactiveTTY() {
+			picked, interrupted := pickSections(defaultSections())
+			if interrupted {
+				return
+			}
+			sections = picked
+		}
+		if err := scaffold(abs, sections); err != nil {
 			fmt.Fprintln(os.Stderr, "sidecar:", err)
 			return
 		}
 		fmt.Printf("Created %s\n", filepath.Base(abs))
 		offerGitExclude(abs)
-		offerClaudeHook(abs)
+		offerClaudeHook(abs, sections)
 	}
 }
 

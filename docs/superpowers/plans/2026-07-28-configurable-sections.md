@@ -549,13 +549,12 @@ func TestPickerCancelReturnsNil(t *testing.T) {
 }
 
 func TestPickerAcceptQuits(t *testing.T) {
-	p := newPicker(defaultSections())
-	_, cmd := p.Update(key("enter"))
+	next, cmd := newPicker(defaultSections()).Update(key("enter"))
 	if cmd == nil {
 		t.Error("enter should return a quit command")
 	}
-	if !p.done && !send(p, "enter").done {
-		// done is set on the returned model
+	if !next.(picker).done {
+		t.Error("enter should mark the picker done")
 	}
 }
 ```
