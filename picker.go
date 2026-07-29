@@ -199,7 +199,7 @@ var (
 func (p picker) View() string {
 	var b strings.Builder
 	b.WriteString("  Customize your sidecar sections\n")
-	b.WriteString("  " + pickerHelpStyle.Render("jk move · space toggle · J/K reorder · e edit · a add · d delete · ⏎ done") + "\n\n")
+	b.WriteString("  " + pickerHelpStyle.Render("jk move · space toggle · J/K reorder · e edit · a add · d delete · ⏎ done · esc cancel") + "\n\n")
 	for i, r := range p.rows {
 		cursor := "   "
 		if i == p.cursor {
