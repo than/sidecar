@@ -22,14 +22,14 @@ it. You get a calm, always-current dashboard of the work while the busy
 transcript churns on the other side.
 
 ```
-┌────────────────────────┬─────────────────────┐
-│  Claude Code            │  sidecar SIDECAR.md │
-│  (edits SIDECAR.md,     │  🧠 Needs action    │
-│   transcript scrolls)   │  🚧 In progress     │
-│                         │  🚘 Parked          │
-│                         │  ✅ Done            │
-│                         │  📦 Shipped         │
-└────────────────────────┴─────────────────────┘
+┌─────────────────────────┬──────────────────────
+│  Claude Code            │  sidecar SIDECAR.md
+│  (edits SIDECAR.md,     │  🧠 Needs action
+│   transcript scrolls)   │  🚧 In progress
+│                         │  🚘 Parked
+│                         │  ✅ Done
+│                         │  📦 Shipped
+└─────────────────────────┴──────────────────────
 ```
 
 Any split-pane setup works — [Supacode], tmux, or your terminal's native
