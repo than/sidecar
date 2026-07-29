@@ -21,16 +21,9 @@ edits `SIDECAR.md` in one pane, sidecar renders it live in the pane next to
 it. You get a calm, always-current dashboard of the work while the busy
 transcript churns on the other side.
 
-```
-┌─────────────────────────┬──────────────────────
-│  Claude Code            │  sidecar SIDECAR.md
-│  (edits SIDECAR.md,     │  🧠 Needs action
-│   transcript scrolls)   │  🚧 In progress
-│                         │  🚘 Parked
-│                         │  ✅ Done
-│                         │  📦 Shipped
-└─────────────────────────┴──────────────────────
-```
+| Claude Code | sidecar `SIDECAR.md` |
+| --- | --- |
+| edits `SIDECAR.md`,<br>transcript scrolls | 🧠 Needs action<br>🚧 In progress<br>🚘 Parked<br>✅ Done<br>📦 Shipped |
 
 Any split-pane setup works — [Supacode], tmux, or your terminal's native
 splits (Ghostty, iTerm2, WezTerm). The trick to keeping the queue *current*
