@@ -19,7 +19,7 @@ and nothing persists for the viewer to read back.
 
 ## Data model
 
-```go
+``` go
 type Section struct {
     Emoji string // literal emoji char(s), may be empty (text-only section)
     Name  string // e.g. "Needs action"
@@ -62,7 +62,7 @@ and **before** the git-exclude / CLAUDE.md prompts.
 
 ```
   Customize your sidecar sections
-  ↑↓/jk move · space toggle · J/K reorder · e edit · a add · d delete · ⏎ done
+  jk move · space toggle · J/K reorder · e edit · a add · d delete · ⏎ done
 
   ▸ [x] 🧠 Needs action    — surfaced for the human to act on
     [x] 🚧 In progress     — actively being worked
@@ -73,7 +73,10 @@ and **before** the git-exclude / CLAUDE.md prompts.
 
 ### Keys
 
-- `↑↓` / `j` `k` — move cursor
+Primary keys stay in the letter cluster; arrow keys work as silent aliases but
+aren't advertised.
+
+- `j` / `k` — move cursor (`↓` / `↑` also work)
 - `space` — toggle include (`[x]` / `[ ]`)
 - `J` / `K` — move the cursor row down / up in order
 - `e` — edit cursor row (see edit mode)
