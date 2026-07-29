@@ -53,7 +53,7 @@ func TestWriteClaudeNoteAppendsAndDedupes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	writeClaudeNote(root, "SIDECAR.md")
+	writeClaudeNote(root, "SIDECAR.md", defaultSections())
 	data, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
 	got := string(data)
 	for _, want := range []string{"# Existing", claudeNoteMarker, "sidecar SIDECAR.md", "go install github.com/than/sidecar@latest", "🧠"} {
@@ -63,7 +63,7 @@ func TestWriteClaudeNoteAppendsAndDedupes(t *testing.T) {
 	}
 
 	// Second call must not duplicate the note.
-	writeClaudeNote(root, "SIDECAR.md")
+	writeClaudeNote(root, "SIDECAR.md", defaultSections())
 	data, _ = os.ReadFile(filepath.Join(root, "CLAUDE.md"))
 	if n := strings.Count(string(data), "<!-- "+claudeNoteMarker+" -->"); n != 1 {
 		t.Errorf("note written %d times, want 1", n)
@@ -73,7 +73,7 @@ func TestWriteClaudeNoteAppendsAndDedupes(t *testing.T) {
 // A fresh project (no settings.json) gets a UserPromptSubmit hook written.
 func TestReconcileHookFreshFile(t *testing.T) {
 	root := t.TempDir()
-	writeReconcileHook(root, "SIDECAR.md")
+	writeReconcileHook(root, "SIDECAR.md", defaultSections())
 
 	data, err := os.ReadFile(filepath.Join(root, ".claude", "settings.json"))
 	if err != nil {
@@ -120,8 +120,8 @@ func TestReconcileHookMergesAndUpgrades(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	writeReconcileHook(root, "SIDECAR.md")
-	writeReconcileHook(root, "SIDECAR.md") // second run must not duplicate
+	writeReconcileHook(root, "SIDECAR.md", defaultSections())
+	writeReconcileHook(root, "SIDECAR.md", defaultSections()) // second run must not duplicate
 
 	data, _ := os.ReadFile(path)
 	var s map[string]any
@@ -160,7 +160,7 @@ func TestReconcileHookLeavesInvalidJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	writeReconcileHook(root, "SIDECAR.md")
+	writeReconcileHook(root, "SIDECAR.md", defaultSections())
 
 	data, _ := os.ReadFile(path)
 	if string(data) != "{not json" {
@@ -188,5 +188,37 @@ func TestAppendLineDedupAndNewline(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(path); strings.Count(string(got), "SIDECAR.md") != 1 {
 		t.Errorf("duplicate line written: %q", got)
+	}
+}
+
+func TestClaudeNoteCustomSections(t *testing.T) {
+	secs := []Section{
+		{"🧠", "Needs action", "for the human"},
+		{"", "Todo", ""},
+	}
+	note := claudeNote("SIDECAR.md", secs)
+	for _, want := range []string{
+		claudeNoteMarker,
+		"`## 🧠 Needs action` — for the human",
+		"`## Todo`",
+		"sidecar SIDECAR.md",
+	} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note missing %q:\n%s", want, note)
+		}
+	}
+	if strings.Contains(note, "Todo` — ") {
+		t.Errorf("hintless section should have no ' — meaning':\n%s", note)
+	}
+}
+
+func TestReconcileMessageCustomSections(t *testing.T) {
+	secs := []Section{{"🧠", "Needs action", ""}, {"✅", "Done", ""}}
+	msg := reconcileMessage("SIDECAR.md", secs)
+	if !strings.Contains(msg, "Sections: 🧠 Needs action / ✅ Done.") {
+		t.Errorf("reconcile message section list wrong:\n%s", msg)
+	}
+	if !strings.Contains(msg, hookSentinel) {
+		t.Errorf("reconcile message missing sentinel:\n%s", msg)
 	}
 }

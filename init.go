@@ -33,7 +33,7 @@ func runInit(args []string) int {
 	}
 
 	offerGitExclude(abs)
-	offerClaudeHook(abs)
+	offerClaudeHook(abs, defaultSections())
 
 	fmt.Printf("\nWatch it:  sidecar %s\n", filepath.Base(abs))
 	return 0
@@ -44,24 +44,32 @@ const claudeNoteMarker = "sidecar:review-queue"
 // claudeNote is the instruction appended to CLAUDE.md so Claude Code
 // sessions in the repo keep the queue updated — and know how to install and
 // launch sidecar. rel is the file path relative to the repo root.
-func claudeNote(rel string) string {
+func claudeNote(rel string, sections []Section) string {
+	var secLines strings.Builder
+	for _, s := range sections {
+		secLines.WriteString("`" + s.Header() + "`")
+		if s.Hint != "" {
+			secLines.WriteString(" — " + s.Hint)
+		}
+		secLines.WriteString("\n")
+	}
 	const tmpl = "<!-- sidecar:review-queue -->\n" +
 		"## Review queue (sidecar)\n\n" +
 		"Maintain `%[1]s` as a live review / TODO queue for the human. Sections:\n" +
-		"`## 🧠 Needs action`, `## 🚧 In progress`, `## 🚘 Parked`, `## ✅ Done`, `## 📦 Shipped`.\n" +
+		"%[2]s" +
 		"Put bare URLs on their own line (keeps them clickable); keep entries short.\n\n" +
 		"The human watches it live with `sidecar %[1]s`. If sidecar isn't installed:\n" +
 		"`go install github.com/than/sidecar@latest`, or a prebuilt binary from\n" +
 		"https://github.com/than/sidecar/releases/latest\n" +
 		"<!-- /sidecar:review-queue -->\n"
-	return fmt.Sprintf(tmpl, rel)
+	return fmt.Sprintf(tmpl, rel, secLines.String())
 }
 
 // offerClaudeHook asks whether to wire the queue into Claude Code — a
 // CLAUDE.md note (the model authors the queue) and optionally a per-turn
 // reconcile hook. Default is no, since it edits committed files. Interactive
 // only.
-func offerClaudeHook(fileAbs string) {
+func offerClaudeHook(fileAbs string, sections []Section) {
 	if !stdinIsTerminal() {
 		return
 	}
@@ -83,16 +91,16 @@ Help Claude keep this queue updated? (adds an instruction for Claude Code)
 Choice [c/b/N]: `)
 	switch readChoice() {
 	case "c":
-		writeClaudeNote(root, rel)
+		writeClaudeNote(root, rel, sections)
 	case "b":
-		writeClaudeNote(root, rel)
-		writeReconcileHook(root, rel)
+		writeClaudeNote(root, rel, sections)
+		writeReconcileHook(root, rel, sections)
 	default:
 		return
 	}
 }
 
-func writeClaudeNote(root, rel string) {
+func writeClaudeNote(root, rel string, sections []Section) {
 	path := filepath.Join(root, "CLAUDE.md")
 	if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), claudeNoteMarker) {
 		fmt.Println("CLAUDE.md already has the sidecar note.")
@@ -112,7 +120,7 @@ func writeClaudeNote(root, rel string) {
 		return
 	}
 	defer f.Close()
-	if _, err := f.WriteString(prefix + claudeNote(rel)); err != nil {
+	if _, err := f.WriteString(prefix + claudeNote(rel, sections)); err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
 		return
 	}
@@ -127,16 +135,20 @@ const hookSentinel = "the sidecar review queue"
 // reconcileMessage is the per-turn reminder the hook echoes. It's conditional
 // ("if your last turn changed task state") so it costs almost nothing on
 // turns that don't touch the queue.
-func reconcileMessage(rel string) string {
-	return fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `sidecar %s`. Sections: 🧠 Needs action / 🚧 In progress / 🚘 Parked / ✅ Done / 📦 Shipped.", rel, hookSentinel, rel)
+func reconcileMessage(rel string, sections []Section) string {
+	labels := make([]string, len(sections))
+	for i, s := range sections {
+		labels[i] = s.label()
+	}
+	return fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `sidecar %s`. Sections: %s.", rel, hookSentinel, rel, strings.Join(labels, " / "))
 }
 
 // reconcileHookEntry is a single Claude Code hook entry (one matcher, one
 // command) that echoes the reminder.
-func reconcileHookEntry(rel string) map[string]any {
+func reconcileHookEntry(rel string, sections []Section) map[string]any {
 	return map[string]any{
 		"hooks": []any{
-			map[string]any{"type": "command", "command": "echo " + shSingleQuote(reconcileMessage(rel))},
+			map[string]any{"type": "command", "command": "echo " + shSingleQuote(reconcileMessage(rel, sections))},
 		},
 	}
 }
@@ -147,9 +159,9 @@ func reconcileHookEntry(rel string) map[string]any {
 // (including an older SessionStart one) so re-running `sidecar init` upgrades
 // cleanly. If the file exists but isn't valid JSON or has a shape it can't
 // safely edit, it prints the snippet instead of risking a clobber.
-func writeReconcileHook(root, rel string) {
+func writeReconcileHook(root, rel string, sections []Section) {
 	path := filepath.Join(root, ".claude", "settings.json")
-	entry := reconcileHookEntry(rel)
+	entry := reconcileHookEntry(rel, sections)
 
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -300,7 +312,7 @@ func offerCreate(abs string) {
 		}
 		fmt.Printf("Created %s\n", filepath.Base(abs))
 		offerGitExclude(abs)
-		offerClaudeHook(abs)
+		offerClaudeHook(abs, defaultSections())
 	}
 }
 
