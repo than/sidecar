@@ -26,12 +26,13 @@ type pickerRow struct {
 }
 
 type picker struct {
-	rows     []pickerRow
-	cursor   int
-	editing  editField
-	input    textinput.Model
-	done     bool
-	canceled bool
+	rows        []pickerRow
+	cursor      int
+	editing     editField
+	input       textinput.Model
+	done        bool
+	canceled    bool
+	interrupted bool
 }
 
 func newPicker(sections []Section) picker {
@@ -103,8 +104,11 @@ func (p picker) updateNav(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		p.done = true
 		return p, tea.Quit
-	case "esc", "q", "ctrl+c":
+	case "esc", "q":
 		p.canceled = true
+		return p, tea.Quit
+	case "ctrl+c":
+		p.interrupted = true
 		return p, tea.Quit
 	}
 	return p, nil
@@ -178,7 +182,7 @@ func (p picker) endEdit() picker {
 // result is the chosen sections: included rows with a non-empty name, in
 // display order. Returns nil when the user canceled.
 func (p picker) result() []Section {
-	if p.canceled {
+	if !p.done {
 		return nil
 	}
 	var out []Section
@@ -199,7 +203,8 @@ var (
 func (p picker) View() string {
 	var b strings.Builder
 	b.WriteString("  Customize your sidecar sections\n")
-	b.WriteString("  " + pickerHelpStyle.Render("jk move · space toggle · J/K reorder · e edit · a add · d delete · ⏎ done · esc cancel") + "\n\n")
+	b.WriteString("  " + pickerHelpStyle.Render("jk move · space toggle · J/K reorder · e edit") + "\n")
+	b.WriteString("  " + pickerHelpStyle.Render("a add · d delete · ⏎ done · esc cancel") + "\n\n")
 	for i, r := range p.rows {
 		cursor := "   "
 		if i == p.cursor {
@@ -221,17 +226,23 @@ func (p picker) View() string {
 	return b.String()
 }
 
-// pickSections runs the interactive picker. On any error, cancel, or an empty
-// result it returns the input sections unchanged.
-func pickSections(sections []Section) []Section {
+// pickSections runs the interactive picker. Returns (sections, interrupted).
+// On error, cancel (esc/q), or an empty result it returns the input sections
+// with interrupted=false. On Ctrl+C it returns (nil-ish input, true) so the
+// caller can abort.
+func pickSections(sections []Section) ([]Section, bool) {
 	m, err := tea.NewProgram(newPicker(sections)).Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar: section picker:", err)
-		return sections
+		return sections, false
 	}
-	res := m.(picker).result()
+	p := m.(picker)
+	if p.interrupted {
+		return sections, true
+	}
+	res := p.result()
 	if len(res) == 0 {
-		return sections
+		return sections, false
 	}
-	return res
+	return res, false
 }

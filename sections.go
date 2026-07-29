@@ -34,7 +34,7 @@ func defaultSections() []Section {
 		{"🚧", "In progress", "actively being worked"},
 		{"🚘", "Parked", "deferred, not dropped"},
 		{"✅", "Done", "merged, not yet released"},
-		{"📦", "Shipped", "released"},
+		{"📦", "Shipped", "released (tag the version)"},
 	}
 }
 
@@ -53,6 +53,7 @@ func renderTemplate(sections []Section) string {
 			b.WriteString("· " + s.label() + " = " + s.Hint + "\n")
 		}
 	}
+	b.WriteString("· Prune early sections as items move; let later ones accumulate as a log.\n")
 	b.WriteString("· One line per item where you can; bare URLs on their own line stay clickable.\n")
 	b.WriteString("-->\n\n")
 	for _, s := range sections {

@@ -59,6 +59,9 @@ func TestRenderTemplateDefault(t *testing.T) {
 	if strings.Count(out, "- nothing yet") != 5 {
 		t.Errorf("want 5 placeholder bullets, got %d", strings.Count(out, "- nothing yet"))
 	}
+	if !strings.Contains(out, "Prune early sections") {
+		t.Errorf("template missing prune instruction:\n%s", out)
+	}
 	if !strings.HasSuffix(out, "\n") || strings.HasSuffix(out, "\n\n") {
 		t.Errorf("template must end in exactly one newline:\n%q", out[len(out)-3:])
 	}

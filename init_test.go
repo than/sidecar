@@ -199,7 +199,7 @@ func TestClaudeNoteCustomSections(t *testing.T) {
 	note := claudeNote("SIDECAR.md", secs)
 	for _, want := range []string{
 		claudeNoteMarker,
-		"`## 🧠 Needs action` — for the human",
+		"- `## 🧠 Needs action` — for the human",
 		"`## Todo`",
 		"sidecar SIDECAR.md",
 	} {

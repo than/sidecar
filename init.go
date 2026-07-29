@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 // runInit scaffolds the target file and offers to keep it out of git.
@@ -27,8 +29,13 @@ func runInit(args []string) int {
 	if _, err := os.Stat(abs); err == nil {
 		fmt.Printf("%s already exists — leaving it untouched.\n", target)
 	} else {
-		if stdinIsTerminal() {
-			sections = pickSections(defaultSections())
+		if interactiveTTY() {
+			picked, interrupted := pickSections(defaultSections())
+			if interrupted {
+				fmt.Fprintln(os.Stderr, "sidecar init: canceled — nothing written.")
+				return 1
+			}
+			sections = picked
 		}
 		if err := scaffold(abs, sections); err != nil {
 			fmt.Fprintln(os.Stderr, "sidecar init:", err)
@@ -44,6 +51,13 @@ func runInit(args []string) int {
 	return 0
 }
 
+// interactiveTTY reports whether both stdin and stdout are terminals — the
+// condition for running the full-screen picker. (The plain readChoice prompts
+// only need stdin.)
+func interactiveTTY() bool {
+	return stdinIsTerminal() && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
 const claudeNoteMarker = "sidecar:review-queue"
 
 // claudeNote is the instruction appended to CLAUDE.md so Claude Code
@@ -52,7 +66,7 @@ const claudeNoteMarker = "sidecar:review-queue"
 func claudeNote(rel string, sections []Section) string {
 	var secLines strings.Builder
 	for _, s := range sections {
-		secLines.WriteString("`" + s.Header() + "`")
+		secLines.WriteString("- `" + s.Header() + "`")
 		if s.Hint != "" {
 			secLines.WriteString(" — " + s.Hint)
 		}
@@ -60,9 +74,9 @@ func claudeNote(rel string, sections []Section) string {
 	}
 	const tmpl = "<!-- sidecar:review-queue -->\n" +
 		"## Review queue (sidecar)\n\n" +
-		"Maintain `%[1]s` as a live review / TODO queue for the human. Sections:\n" +
+		"Maintain `%[1]s` as a live review / TODO queue for the human. Sections:\n\n" +
 		"%[2]s" +
-		"Put bare URLs on their own line (keeps them clickable); keep entries short.\n\n" +
+		"\nPut bare URLs on their own line (keeps them clickable); keep entries short.\n\n" +
 		"The human watches it live with `sidecar %[1]s`. If sidecar isn't installed:\n" +
 		"`go install github.com/than/sidecar@latest`, or a prebuilt binary from\n" +
 		"https://github.com/than/sidecar/releases/latest\n" +
@@ -312,8 +326,12 @@ func offerCreate(abs string) {
 		return
 	default: // Enter or "y" → create
 		sections := defaultSections()
-		if stdinIsTerminal() {
-			sections = pickSections(defaultSections())
+		if interactiveTTY() {
+			picked, interrupted := pickSections(defaultSections())
+			if interrupted {
+				return
+			}
+			sections = picked
 		}
 		if err := scaffold(abs, sections); err != nil {
 			fmt.Fprintln(os.Stderr, "sidecar:", err)

@@ -29,7 +29,7 @@ func send(p picker, keys ...string) picker {
 }
 
 func TestPickerToggleExcludes(t *testing.T) {
-	p := send(newPicker(defaultSections()), "space") // deselect row 0 (Needs action)
+	p := send(newPicker(defaultSections()), "space", "enter") // deselect row 0 (Needs action), then quit
 	got := p.result()
 	if len(got) != 4 || got[0].Name != "In progress" {
 		t.Fatalf("toggle didn't exclude row 0: %+v", got)
@@ -37,7 +37,7 @@ func TestPickerToggleExcludes(t *testing.T) {
 }
 
 func TestPickerReorderDown(t *testing.T) {
-	p := send(newPicker(defaultSections()), "J") // move row 0 down past row 1
+	p := send(newPicker(defaultSections()), "J", "enter") // move row 0 down past row 1, then quit
 	got := p.result()
 	if got[0].Name != "In progress" || got[1].Name != "Needs action" {
 		t.Fatalf("J did not reorder: %+v", got[:2])
@@ -48,14 +48,14 @@ func TestPickerReorderDown(t *testing.T) {
 }
 
 func TestPickerReorderBounds(t *testing.T) {
-	p := send(newPicker(defaultSections()), "K") // already at top; no-op
+	p := send(newPicker(defaultSections()), "K", "enter") // already at top; no-op, then quit
 	if p.result()[0].Name != "Needs action" {
 		t.Errorf("K at top should be a no-op")
 	}
 }
 
 func TestPickerDelete(t *testing.T) {
-	p := send(newPicker(defaultSections()), "d")
+	p := send(newPicker(defaultSections()), "d", "enter")
 	if len(p.result()) != 4 || p.result()[0].Name != "In progress" {
 		t.Fatalf("delete row 0 failed: %+v", p.result())
 	}
@@ -66,7 +66,7 @@ func TestPickerAddAndEdit(t *testing.T) {
 	// type "★", enter -> name field, type "Blocked", enter -> hint field,
 	// type "waiting", enter -> commit.
 	p := newPicker(defaultSections())
-	p = send(p, "a", "★", "enter", "Blocked", "enter", "waiting", "enter")
+	p = send(p, "a", "★", "enter", "Blocked", "enter", "waiting", "enter", "enter")
 	got := p.result()
 	var found *Section
 	for i := range got {
@@ -85,7 +85,7 @@ func TestPickerAddAndEdit(t *testing.T) {
 func TestPickerAddEmptyNameDropped(t *testing.T) {
 	// a: add, then leave name empty -> row is dropped on commit.
 	p := newPicker(defaultSections())
-	p = send(p, "a", "enter", "enter", "enter") // empty emoji, empty name, empty hint
+	p = send(p, "a", "enter", "enter", "enter", "enter") // empty emoji, empty name, empty hint, then quit
 	if len(p.result()) != 5 {
 		t.Errorf("empty-name add should be dropped, got %d rows", len(p.result()))
 	}
@@ -94,7 +94,7 @@ func TestPickerAddEmptyNameDropped(t *testing.T) {
 func TestPickerEditExisting(t *testing.T) {
 	// e on row 0: keep emoji (enter), rename to "Inbox" (enter), keep hint.
 	p := newPicker(defaultSections())
-	p = send(p, "e", "enter", "Inbox", "enter", "enter")
+	p = send(p, "e", "enter", "Inbox", "enter", "enter", "enter")
 	if p.result()[0].Name != "Inbox" {
 		t.Errorf("edit didn't rename row 0: %+v", p.result()[0])
 	}
@@ -112,7 +112,25 @@ func TestPickerAcceptQuits(t *testing.T) {
 	if cmd == nil {
 		t.Error("enter should return a quit command")
 	}
-	if !next.(picker).done {
+	p := next.(picker)
+	if !p.done {
 		t.Error("enter should mark the picker done")
+	}
+	if p.result() == nil {
+		t.Error("result() should be non-nil after enter for the default set")
+	}
+}
+
+func TestPickerInterrupt(t *testing.T) {
+	next, cmd := newPicker(defaultSections()).Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Error("ctrl+c should return a quit command")
+	}
+	p := next.(picker)
+	if !p.interrupted {
+		t.Error("ctrl+c should mark the picker interrupted")
+	}
+	if p.result() != nil {
+		t.Errorf("interrupted result() should be nil, got %+v", p.result())
 	}
 }
