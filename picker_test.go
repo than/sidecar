@@ -134,3 +134,22 @@ func TestPickerInterrupt(t *testing.T) {
 		t.Errorf("interrupted result() should be nil, got %+v", p.result())
 	}
 }
+
+// Ctrl+C aborts from inside an edit too, not just nav mode.
+func TestPickerInterruptWhileEditing(t *testing.T) {
+	p := send(newPicker(defaultSections()), "e") // enter edit mode (emoji field)
+	if p.editing == fieldNone {
+		t.Fatal("expected to be in edit mode after 'e'")
+	}
+	next, cmd := p.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Error("ctrl+c while editing should return a quit command")
+	}
+	p = next.(picker)
+	if !p.interrupted {
+		t.Error("ctrl+c while editing should mark the picker interrupted")
+	}
+	if p.result() != nil {
+		t.Errorf("interrupted result() should be nil, got %+v", p.result())
+	}
+}

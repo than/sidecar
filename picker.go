@@ -159,6 +159,11 @@ func (p picker) updateEditing(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyEsc:
 		return p.endEdit(), nil
+	case tea.KeyCtrlC:
+		// Ctrl+C is a universal abort from inside an edit too, matching
+		// nav mode — otherwise textinput silently swallows it.
+		p.interrupted = true
+		return p, tea.Quit
 	}
 	var cmd tea.Cmd
 	p.input, cmd = p.input.Update(km)
