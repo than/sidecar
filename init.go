@@ -23,17 +23,22 @@ func runInit(args []string) int {
 		return 1
 	}
 
+	sections := defaultSections()
 	if _, err := os.Stat(abs); err == nil {
 		fmt.Printf("%s already exists — leaving it untouched.\n", target)
-	} else if err := scaffold(abs, defaultSections()); err != nil {
-		fmt.Fprintln(os.Stderr, "sidecar init:", err)
-		return 1
 	} else {
+		if stdinIsTerminal() {
+			sections = pickSections(defaultSections())
+		}
+		if err := scaffold(abs, sections); err != nil {
+			fmt.Fprintln(os.Stderr, "sidecar init:", err)
+			return 1
+		}
 		fmt.Printf("Created %s\n", target)
 	}
 
 	offerGitExclude(abs)
-	offerClaudeHook(abs, defaultSections())
+	offerClaudeHook(abs, sections)
 
 	fmt.Printf("\nWatch it:  sidecar %s\n", filepath.Base(abs))
 	return 0
@@ -306,13 +311,17 @@ func offerCreate(abs string) {
 	case "n", "no":
 		return
 	default: // Enter or "y" → create
-		if err := scaffold(abs, defaultSections()); err != nil {
+		sections := defaultSections()
+		if stdinIsTerminal() {
+			sections = pickSections(defaultSections())
+		}
+		if err := scaffold(abs, sections); err != nil {
 			fmt.Fprintln(os.Stderr, "sidecar:", err)
 			return
 		}
 		fmt.Printf("Created %s\n", filepath.Base(abs))
 		offerGitExclude(abs)
-		offerClaudeHook(abs, defaultSections())
+		offerClaudeHook(abs, sections)
 	}
 }
 

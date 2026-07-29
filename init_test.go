@@ -212,6 +212,22 @@ func TestClaudeNoteCustomSections(t *testing.T) {
 	}
 }
 
+// The non-interactive path must still write the default template and must
+// NOT start a picker (tests aren't a TTY).
+func TestInitNonInteractiveUsesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "SIDECAR.md")
+	if code := runInit([]string{target}); code != 0 {
+		t.Fatalf("runInit exit = %d", code)
+	}
+	data, _ := os.ReadFile(target)
+	for _, s := range defaultSections() {
+		if !strings.Contains(string(data), s.Header()) {
+			t.Errorf("default template missing %q:\n%s", s.Header(), data)
+		}
+	}
+}
+
 func TestReconcileMessageCustomSections(t *testing.T) {
 	secs := []Section{{"🧠", "Needs action", ""}, {"✅", "Done", ""}}
 	msg := reconcileMessage("SIDECAR.md", secs)
