@@ -286,6 +286,25 @@ func TestUpdatePointerFileMissingDuringFlash(t *testing.T) {
 	}
 }
 
+// An empty-file baseline is a legitimate prior state, distinct from "no
+// baseline yet" — a change after it must still be marked.
+func TestUpdatePointerEmptyBaselineThenLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SIDECAR.md")
+	writeFile(t, path, "") // empty file
+	m := testModel(t, path)
+	// first non-empty content: this is the first real render, marks nothing
+	writeFile(t, path, "# T\n")
+	next, _ := m.Update(fileEventMsg{})
+	m = next.(model)
+	// now add a bullet — must be marked even though the prior baseline was empty
+	writeFile(t, path, "# T\n\n- added\n")
+	next, _ = m.Update(fileEventMsg{})
+	m = next.(model)
+	if !strings.Contains(stripANSI(m.vp.View()), "▸ added") {
+		t.Errorf("added bullet not marked after empty-file baseline:\n%s", stripANSI(m.vp.View()))
+	}
+}
+
 // The status bar is exactly pane width — never wider.
 func TestStatusBarWidth(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "REVIEW.md")

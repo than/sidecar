@@ -46,15 +46,17 @@ func changedLines(oldLines, newLines []string) map[int]bool {
 	// Guard against a pathological table on very large files: past this many
 	// cells, skip line marking entirely rather than allocate hundreds of MB
 	// per render. Real queues are far smaller; this only trips on huge docs.
-	const maxDiffCells = 1 << 18 // ~2 MB of int cells; ample for any real queue
+	const maxDiffCells = 1 << 20 // ~4 MB with int32 cells; ~1000 lines a side
 	if len(om)*len(nm) > maxDiffCells {
 		return changed // empty — no markers, but the render still happens
 	}
 
-	// LCS length table over the differing middle.
-	lcs := make([][]int, len(om)+1)
+	// LCS length table over the differing middle. int32 halves the per-cell
+	// footprint vs int — LCS lengths are bounded by the line count, far under
+	// int32 max.
+	lcs := make([][]int32, len(om)+1)
 	for i := range lcs {
-		lcs[i] = make([]int, len(nm)+1)
+		lcs[i] = make([]int32, len(nm)+1)
 	}
 	for i := len(om) - 1; i >= 0; i-- {
 		for j := len(nm) - 1; j >= 0; j-- {
@@ -93,24 +95,25 @@ func composeMarked(lines []string, changed map[int]bool, flash bool, width int) 
 	tr, tg, tb := hexToRGB(colorText)
 	updatedMark := fmt.Sprintf("\x1b[1;38;2;%d;%d;%dm▸ \x1b[22;38;2;%d;%d;%dm", ur, ug, ub, tr, tg, tb)
 
-	// Resolve which bullet lines to mark. A changed bullet marks itself; a
-	// changed non-bullet line (e.g. a wrapped continuation of a long item)
-	// marks its owning bullet — the nearest preceding bullet line, bounded by a
-	// blank line so we don't cross into a previous block.
+	// owner[i] = index of the bullet line that owns line i (itself if it is a
+	// bullet; the nearest preceding bullet within the same block otherwise), or
+	// -1 if none. Single O(n) pass, reset at blank lines so ownership can't
+	// cross a block boundary.
+	owner := make([]int, len(lines))
+	cur := -1
+	for i, ln := range lines {
+		if visibleWidth(ln) == 0 {
+			cur = -1
+		} else if isBulletLine(ln) {
+			cur = i
+		}
+		owner[i] = cur
+	}
+
 	swap := map[int]bool{}
 	for i := range lines {
-		if !changed[i] {
-			continue
-		}
-		if isBulletLine(lines[i]) {
-			swap[i] = true
-			continue
-		}
-		for j := i - 1; j >= 0 && visibleWidth(lines[j]) > 0; j-- {
-			if isBulletLine(lines[j]) {
-				swap[j] = true
-				break
-			}
+		if changed[i] && owner[i] >= 0 {
+			swap[owner[i]] = true
 		}
 	}
 
@@ -119,7 +122,7 @@ func composeMarked(lines []string, changed map[int]bool, flash bool, width int) 
 		if swap[i] {
 			ln = strings.Replace(ln, "• ", updatedMark, 1)
 		}
-		if changed[i] && flash && visibleWidth(ln) > 0 {
+		if (changed[i] || swap[i]) && flash && visibleWidth(ln) > 0 {
 			ln = applyLineBg(ln, colorFlashLineBg, width)
 		}
 		out[i] = ln
@@ -137,6 +140,9 @@ func isBulletLine(ln string) bool {
 // applyLineBg tints the whole visible line with the given hex background,
 // re-applying it after each SGR reset (a reset would otherwise clear the
 // background mid-line), and pads to width so the tint spans the pane.
+// It re-applies the background after each standalone ESC[0m reset; this relies
+// on termenv emitting resets as a bare ESC[0m (a combined ESC[0;…m would drop
+// the tint mid-line — not produced by the current renderer).
 func applyLineBg(ln, hex string, width int) string {
 	r, g, b := hexToRGB(hex)
 	bg := fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r, g, b)

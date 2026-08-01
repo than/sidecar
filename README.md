@@ -5,6 +5,7 @@ Sidecar is a live, scrollable Markdown viewer for a narrow terminal pane. It’s
 ```
 sidecar [file.md]        # default: ./SIDECAR.md
 sidecar init [file.md]   # create the file, and optionally keep it out of git
+sidecar --no-flash [file]  disable the subtle change-flash (▸ still shows)
 ```
 
 ## Why two panes
@@ -33,6 +34,9 @@ It then offers to add a note to `CLAUDE.md`, and optionally a per-turn `UserProm
 - Scrolls with `j` and `k`, the arrow keys, `PgUp` and `PgDn`, and `g` and `G` for top and bottom. Sidecar keeps your scroll position across reloads. It doesn’t capture the mouse, so your terminal’s text selection and clickable links keep working.
 - Reloads on demand with `r`, and quits with `q`.
 - Re-renders when you resize the terminal, at the pane width minus 2. It never renders wider than the pane.
+- Points at what changed: on reload, a changed bullet's `•` becomes a bright
+  `▸` (until the next change), and changed lines get a brief, subtle background
+  flash. Disable the flash with `--no-flash`.
 - Shows a thin status bar: the filename, the time since the last update, and the scroll percentage.
 
 ## Rendering style

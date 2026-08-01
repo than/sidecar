@@ -157,6 +157,25 @@ func TestChangedLinesDeletionNoSpuriousMark(t *testing.T) {
 	}
 }
 
+func TestComposeMarkedNeverWiderThanWidth(t *testing.T) {
+	for _, w := range []int{20, 40, 80} {
+		lines, _ := func() ([]string, error) {
+			out, err := renderMarkdown("# Title\n\n- a fairly long bullet item that will wrap\n- short\n\nsome prose here too\n", w)
+			return strings.Split(out, "\n"), err
+		}()
+		all := map[int]bool{}
+		for i := range lines {
+			all[i] = true
+		}
+		out := composeMarked(lines, all, true, w) // flash on, everything changed
+		for _, ln := range strings.Split(out, "\n") {
+			if visibleWidth(ln) > w {
+				t.Errorf("width %d: composed line exceeds pane (%d):\n%q", w, visibleWidth(ln), ln)
+			}
+		}
+	}
+}
+
 func TestChangedLinesCapDegradesToEmpty(t *testing.T) {
 	// Two large, fully-different slices would blow the table; the cap must
 	// return an empty set instead of allocating/panicking.

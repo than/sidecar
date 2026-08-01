@@ -58,7 +58,13 @@ type model struct {
 	flash bool
 
 	// update pointer
-	prevBaseline  string       // content before the last change; diffed vs raw
+	prevBaseline string // content before the last change; diffed vs raw
+	// hasBaseline is true once a prior successful content render exists — it
+	// distinguishes "no baseline yet" (very first render, always unmarked)
+	// from "baseline was a legitimately empty file" (prevBaseline == "" but
+	// still a real prior state to diff against). Set true at the end of the
+	// first successful reload, so that reload itself marks nothing.
+	hasBaseline   bool
 	renderedLines []string     // cached rendered lines for cheap recompose
 	changed       map[int]bool // changed line indices in the current render
 	lineFlash     bool         // subtle line-bg flash active
@@ -181,6 +187,7 @@ func (m *model) reload(force bool) (changed bool) {
 		m.renderedLines = nil
 		m.changed = nil
 		m.lineFlash = false
+		m.hasBaseline = false
 		return false
 	}
 	if st, err := os.Stat(m.path); err == nil {
@@ -206,12 +213,13 @@ func (m *model) reload(force bool) (changed bool) {
 		m.renderedLines = nil
 		m.changed = nil
 		m.lineFlash = false
+		m.hasBaseline = false
 		return false
 	}
 	lines := strings.Split(rendered, "\n")
 
 	var changedMap map[int]bool
-	if m.prevBaseline != "" {
+	if m.hasBaseline {
 		// Deliberate degrade: if the baseline fails to render we show no
 		// markers this pass rather than surface an error — the content render
 		// above already succeeded.
@@ -226,6 +234,7 @@ func (m *model) reload(force bool) (changed bool) {
 	offset := m.vp.YOffset
 	m.vp.SetContent(display)
 	m.vp.SetYOffset(offset)
+	m.hasBaseline = true
 	return contentChanged
 }
 
