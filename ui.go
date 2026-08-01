@@ -19,21 +19,21 @@ type fileEventMsg struct{}
 type tickMsg time.Time
 
 // flashOffMsg clears the post-reload status-bar highlight.
-type flashOffMsg struct{}
+type flashOffMsg struct{ gen int }
 
 const flashDuration = 450 * time.Millisecond
 
-func flashOff() tea.Cmd {
-	return tea.Tick(flashDuration, func(time.Time) tea.Msg { return flashOffMsg{} })
+func flashOff(gen int) tea.Cmd {
+	return tea.Tick(flashDuration, func(time.Time) tea.Msg { return flashOffMsg{gen} })
 }
 
 // lineFlashOffMsg clears the subtle post-reload line-background flash.
-type lineFlashOffMsg struct{}
+type lineFlashOffMsg struct{ gen int }
 
 const lineFlashDuration = 500 * time.Millisecond
 
-func lineFlashOff() tea.Cmd {
-	return tea.Tick(lineFlashDuration, func(time.Time) tea.Msg { return lineFlashOffMsg{} })
+func lineFlashOff(gen int) tea.Cmd {
+	return tea.Tick(lineFlashDuration, func(time.Time) tea.Msg { return lineFlashOffMsg{gen} })
 }
 
 type model struct {
@@ -69,6 +69,7 @@ type model struct {
 	changed       map[int]bool // changed line indices in the current render
 	lineFlash     bool         // subtle line-bg flash active
 	noFlash       bool         // --no-flash: suppress the line flash
+	flashGen      int          // bumped on each change; a stale flash-off msg is ignored
 }
 
 func newModel(path string, noFlash bool) model {
@@ -91,12 +92,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "r":
 			if m.reload(true) {
+				m.flashGen++
+				gen := m.flashGen
 				m.flash = true
-				cmds := []tea.Cmd{flashOff()}
+				cmds := []tea.Cmd{flashOff(gen)}
 				if !m.noFlash {
 					m.lineFlash = true
 					m.recompose()
-					cmds = append(cmds, lineFlashOff())
+					cmds = append(cmds, lineFlashOff(gen))
 				}
 				return m, tea.Batch(cmds...)
 			}
@@ -123,12 +126,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fileEventMsg:
 		if m.reload(false) {
+			m.flashGen++
+			gen := m.flashGen
 			m.flash = true
-			cmds := []tea.Cmd{flashOff()}
+			cmds := []tea.Cmd{flashOff(gen)}
 			if !m.noFlash {
 				m.lineFlash = true
 				m.recompose() // show the flash background immediately
-				cmds = append(cmds, lineFlashOff())
+				cmds = append(cmds, lineFlashOff(gen))
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -145,22 +150,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			changed = m.reload(false)
 		}
 		if changed {
+			m.flashGen++
+			gen := m.flashGen
 			m.flash = true
-			cmds := []tea.Cmd{tick(), flashOff()}
+			cmds := []tea.Cmd{tick(), flashOff(gen)}
 			if !m.noFlash {
 				m.lineFlash = true
 				m.recompose()
-				cmds = append(cmds, lineFlashOff())
+				cmds = append(cmds, lineFlashOff(gen))
 			}
 			return m, tea.Batch(cmds...)
 		}
 		return m, tick()
 
 	case flashOffMsg:
+		if msg.gen != m.flashGen {
+			return m, nil
+		}
 		m.flash = false
 		return m, nil
 
 	case lineFlashOffMsg:
+		if msg.gen != m.flashGen {
+			return m, nil
+		}
 		m.lineFlash = false
 		m.recompose()
 		return m, nil

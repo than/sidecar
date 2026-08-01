@@ -163,7 +163,7 @@ func TestReloadFlash(t *testing.T) {
 	}
 
 	// flashOffMsg clears it.
-	next, _ = m.Update(flashOffMsg{})
+	next, _ = m.Update(flashOffMsg{gen: m.flashGen})
 	m = next.(model)
 	if m.flash {
 		t.Error("flash not cleared by flashOffMsg")
@@ -221,13 +221,47 @@ func TestUpdatePointerFlashOffKeepsMarker(t *testing.T) {
 	if !strings.Contains(m.vp.View(), "\x1b[48;2;") {
 		t.Error("expected flash background right after change")
 	}
-	next, _ = m.Update(lineFlashOffMsg{})
+	next, _ = m.Update(lineFlashOffMsg{gen: m.flashGen})
 	m = next.(model)
 	if strings.Contains(m.vp.View(), "\x1b[48;2;") {
 		t.Error("flash background should clear on lineFlashOffMsg")
 	}
 	if !strings.Contains(stripANSI(m.vp.View()), "▸ ALPHA") {
 		t.Error("▸ marker should persist after flash clears")
+	}
+}
+
+func TestUpdatePointerOverlappingFlashNotCancelled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SIDECAR.md")
+	writeFile(t, path, "# T\n\n- alpha\n")
+	m := testModel(t, path)
+
+	// First change → flash, generation g1.
+	writeFile(t, path, "# T\n\n- ALPHA\n")
+	next, _ := m.Update(fileEventMsg{})
+	m = next.(model)
+	g1 := m.flashGen
+
+	// Second change before the first timer fires → flash, generation g2 > g1.
+	writeFile(t, path, "# T\n\n- ALPHA\n- beta\n")
+	next, _ = m.Update(fileEventMsg{})
+	m = next.(model)
+	if m.flashGen == g1 {
+		t.Fatal("second change should bump the flash generation")
+	}
+
+	// The FIRST timer now fires (stale gen). It must NOT clear the second flash.
+	next, _ = m.Update(lineFlashOffMsg{gen: g1})
+	m = next.(model)
+	if !m.lineFlash {
+		t.Error("a stale flash-off must not cancel the newer flash")
+	}
+
+	// The current-generation timer clears it.
+	next, _ = m.Update(lineFlashOffMsg{gen: m.flashGen})
+	m = next.(model)
+	if m.lineFlash {
+		t.Error("current-generation flash-off should clear the flash")
 	}
 }
 
@@ -275,7 +309,7 @@ func TestUpdatePointerFileMissingDuringFlash(t *testing.T) {
 	}
 
 	// Flash timer fires now → must NOT resurrect the old document.
-	next, _ = m.Update(lineFlashOffMsg{})
+	next, _ = m.Update(lineFlashOffMsg{gen: m.flashGen})
 	m = next.(model)
 	view := stripANSI(m.vp.View())
 	if strings.Contains(view, "ALPHA") {
