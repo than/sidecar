@@ -110,6 +110,14 @@ func TestComposeMarkedNoFlashNoBackground(t *testing.T) {
 	}
 }
 
+func TestChangedLinesTrimmedContext(t *testing.T) {
+	old := []string{"h", "a", "b", "c", "z"}
+	nw := []string{"h", "a", "X", "c", "z"} // only index 2 changed
+	if got := idx(changedLines(old, nw)); !eq(got, []int{2}) {
+		t.Errorf("trimmed-context change → %v, want [2]", got)
+	}
+}
+
 func TestChangedLinesDeletionNoSpuriousMark(t *testing.T) {
 	// Deleting a line should not mark the surrounding context in the new render.
 	old := []string{"a", "b", "c"}

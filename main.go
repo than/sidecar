@@ -53,9 +53,13 @@ func main() {
 	path := defaultFile
 	noFlash := false
 	for _, a := range os.Args[1:] {
-		switch a {
-		case "--no-flash":
+		switch {
+		case a == "--no-flash":
 			noFlash = true
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintf(os.Stderr, "sidecar: unknown flag %q\n\n", a)
+			fmt.Print(help)
+			os.Exit(2)
 		default:
 			path = a
 		}

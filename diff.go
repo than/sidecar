@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -30,14 +28,29 @@ func changedLines(oldLines, newLines []string) map[int]bool {
 		n[i] = stripANSI(l)
 	}
 
-	// LCS length table.
-	lcs := make([][]int, len(o)+1)
-	for i := range lcs {
-		lcs[i] = make([]int, len(n)+1)
+	changed := map[int]bool{}
+
+	// Trim the common prefix and suffix — unchanged lines need no diffing and
+	// keep the DP table proportional to the edited region, not the whole file.
+	start := 0
+	for start < len(o) && start < len(n) && o[start] == n[start] {
+		start++
 	}
-	for i := len(o) - 1; i >= 0; i-- {
-		for j := len(n) - 1; j >= 0; j-- {
-			if o[i] == n[j] {
+	endO, endN := len(o), len(n)
+	for endO > start && endN > start && o[endO-1] == n[endN-1] {
+		endO--
+		endN--
+	}
+	om, nm := o[start:endO], n[start:endN]
+
+	// LCS length table over the differing middle.
+	lcs := make([][]int, len(om)+1)
+	for i := range lcs {
+		lcs[i] = make([]int, len(nm)+1)
+	}
+	for i := len(om) - 1; i >= 0; i-- {
+		for j := len(nm) - 1; j >= 0; j-- {
+			if om[i] == nm[j] {
 				lcs[i][j] = lcs[i+1][j+1] + 1
 			} else if lcs[i+1][j] >= lcs[i][j+1] {
 				lcs[i][j] = lcs[i+1][j]
@@ -47,18 +60,16 @@ func changedLines(oldLines, newLines []string) map[int]bool {
 		}
 	}
 
-	// Walk the table; lines in n that aren't part of the common subsequence
-	// are the changed ones.
-	changed := map[int]bool{}
+	// Walk; lines in the middle of nm not on the common subsequence are changed.
 	i, j := 0, 0
-	for j < len(n) {
-		if i < len(o) && o[i] == n[j] {
+	for j < len(nm) {
+		if i < len(om) && om[i] == nm[j] {
 			i++
 			j++
-		} else if i < len(o) && lcs[i+1][j] >= lcs[i][j+1] {
-			i++ // a line from old was removed
+		} else if i < len(om) && lcs[i+1][j] >= lcs[i][j+1] {
+			i++
 		} else {
-			changed[j] = true // n[j] is new/modified
+			changed[start+j] = true
 			j++
 		}
 	}
@@ -70,8 +81,9 @@ func changedLines(oldLines, newLines []string) map[int]bool {
 // gets a subtle background tint. Order matters — the bullet is swapped first so
 // applyLineBg re-establishes the background after the reset the swap introduces.
 func composeMarked(lines []string, changed map[int]bool, flash bool, width int) string {
-	updatedMark := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(colorUpdated)).Bold(true).Render("▸ ")
+	ur, ug, ub := hexToRGB(colorUpdated)
+	tr, tg, tb := hexToRGB(colorText)
+	updatedMark := fmt.Sprintf("\x1b[1;38;2;%d;%d;%dm▸ \x1b[22;38;2;%d;%d;%dm", ur, ug, ub, tr, tg, tb)
 
 	out := make([]string, len(lines))
 	for i, ln := range lines {
@@ -79,7 +91,7 @@ func composeMarked(lines []string, changed map[int]bool, flash bool, width int) 
 			if isBulletLine(ln) {
 				ln = strings.Replace(ln, "• ", updatedMark, 1)
 			}
-			if flash {
+			if flash && visibleWidth(ln) > 0 {
 				ln = applyLineBg(ln, colorFlashLineBg, width)
 			}
 		}
