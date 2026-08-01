@@ -215,6 +215,14 @@ func (m *model) reload(force bool) (changed bool) {
 	}
 	m.raw = raw
 
+	// First successful render — and after an error/missing-file recovery, where
+	// hasBaseline was reset — seed the baseline to the content itself, so a
+	// forced re-render (resize, r) before any real change diffs against itself
+	// and marks nothing.
+	if !m.hasBaseline {
+		m.prevBaseline = raw
+	}
+
 	rendered, err := renderMarkdown(raw, m.renderWidth())
 	if err != nil {
 		m.loadErr = err

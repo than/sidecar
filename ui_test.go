@@ -341,3 +341,30 @@ func TestStatusBarWidth(t *testing.T) {
 		}
 	}
 }
+
+// A resize before any content change must not mark anything (regression:
+// hasBaseline true + empty prevBaseline diffed against the whole document).
+func TestUpdatePointerResizeBeforeChangeUnmarked(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SIDECAR.md")
+	writeFile(t, path, "# T\n\n- alpha\n- beta\n")
+	m := testModel(t, path) // first render via the initial WindowSizeMsg
+
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 20})
+	m = next.(model)
+	if strings.Contains(stripANSI(m.vp.View()), "▸") {
+		t.Errorf("resize before any change should mark nothing:\n%s", stripANSI(m.vp.View()))
+	}
+}
+
+// The `r` force-reload before any content change must not mark anything.
+func TestUpdatePointerRKeyBeforeChangeUnmarked(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SIDECAR.md")
+	writeFile(t, path, "# T\n\n- alpha\n")
+	m := testModel(t, path)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = next.(model)
+	if strings.Contains(stripANSI(m.vp.View()), "▸") {
+		t.Errorf("r before any change should mark nothing:\n%s", stripANSI(m.vp.View()))
+	}
+}
