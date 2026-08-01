@@ -43,6 +43,14 @@ func changedLines(oldLines, newLines []string) map[int]bool {
 	}
 	om, nm := o[start:endO], n[start:endN]
 
+	// Guard against a pathological table on very large files: past this many
+	// cells, skip line marking entirely rather than allocate hundreds of MB
+	// per render. Real queues are far smaller; this only trips on huge docs.
+	const maxDiffCells = 4 << 20 // ~32 MB of int cells
+	if len(om)*len(nm) > maxDiffCells {
+		return changed // empty — no markers, but the render still happens
+	}
+
 	// LCS length table over the differing middle.
 	lcs := make([][]int, len(om)+1)
 	for i := range lcs {

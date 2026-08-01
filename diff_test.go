@@ -126,3 +126,21 @@ func TestChangedLinesDeletionNoSpuriousMark(t *testing.T) {
 		t.Errorf("deletion → %v, want none (nothing added in new)", got)
 	}
 }
+
+func TestChangedLinesCapDegradesToEmpty(t *testing.T) {
+	// Two large, fully-different slices would blow the table; the cap must
+	// return an empty set instead of allocating/panicking.
+	n := 5000
+	old := make([]string, n)
+	nw := make([]string, n)
+	for i := 0; i < n; i++ {
+		old[i] = "old-" + string(rune('a'+i%26))
+		nw[i] = "new-" + string(rune('a'+i%26))
+	}
+	// Force no common prefix/suffix so the trim can't shrink it.
+	old[0], nw[0] = "A", "B"
+	old[n-1], nw[n-1] = "Y", "Z"
+	if got := len(changedLines(old, nw)); got != 0 {
+		t.Errorf("oversized diff should mark nothing, got %d", got)
+	}
+}
