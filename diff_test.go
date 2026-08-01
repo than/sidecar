@@ -109,3 +109,12 @@ func TestComposeMarkedNoFlashNoBackground(t *testing.T) {
 		t.Errorf("no flash should not inject a background:\n%q", out)
 	}
 }
+
+func TestChangedLinesDeletionNoSpuriousMark(t *testing.T) {
+	// Deleting a line should not mark the surrounding context in the new render.
+	old := []string{"a", "b", "c"}
+	nw := []string{"a", "c"}
+	if got := idx(changedLines(old, nw)); len(got) != 0 {
+		t.Errorf("deletion → %v, want none (nothing added in new)", got)
+	}
+}

@@ -178,6 +178,9 @@ func (m *model) reload(force bool) (changed bool) {
 			m.vp.SetContent(fmt.Sprintf("\n  Error reading %s:\n  %v", m.path, err))
 		}
 		m.vp.GotoTop()
+		m.renderedLines = nil
+		m.changed = nil
+		m.lineFlash = false
 		return false
 	}
 	if st, err := os.Stat(m.path); err == nil {
@@ -200,6 +203,9 @@ func (m *model) reload(force bool) (changed bool) {
 	if err != nil {
 		m.loadErr = err
 		m.vp.SetContent(fmt.Sprintf("\n  Render error: %v", err))
+		m.renderedLines = nil
+		m.changed = nil
+		m.lineFlash = false
 		return false
 	}
 	lines := strings.Split(rendered, "\n")
@@ -223,7 +229,7 @@ func (m *model) reload(force bool) (changed bool) {
 // recompose re-renders the cached lines for the current flash state without
 // re-reading the file — used when only the flash toggles.
 func (m *model) recompose() {
-	if m.renderedLines == nil {
+	if m.renderedLines == nil || m.fileMissing || m.loadErr != nil {
 		return
 	}
 	display := composeMarked(m.renderedLines, m.changed, m.lineFlash && !m.noFlash, m.renderWidth())

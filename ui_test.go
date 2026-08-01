@@ -248,6 +248,44 @@ func TestUpdatePointerNoFlashFlag(t *testing.T) {
 	}
 }
 
+// A file deleted while the line flash is pending must not have its stale
+// content recomposed over the "waiting for file" placeholder.
+func TestUpdatePointerFileMissingDuringFlash(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "SIDECAR.md")
+	writeFile(t, path, "# T\n\n- alpha\n")
+	m := testModel(t, path)
+
+	// A change starts the flash.
+	writeFile(t, path, "# T\n\n- ALPHA\n")
+	next, _ := m.Update(fileEventMsg{})
+	m = next.(model)
+	if !m.lineFlash {
+		t.Fatal("expected flash after change")
+	}
+
+	// File disappears before the flash timer fires.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	next, _ = m.Update(fileEventMsg{})
+	m = next.(model)
+	if !m.fileMissing {
+		t.Fatal("expected fileMissing after delete")
+	}
+
+	// Flash timer fires now → must NOT resurrect the old document.
+	next, _ = m.Update(lineFlashOffMsg{})
+	m = next.(model)
+	view := stripANSI(m.vp.View())
+	if strings.Contains(view, "ALPHA") {
+		t.Errorf("stale content recomposed over waiting view:\n%s", view)
+	}
+	if !strings.Contains(view, "waiting for") {
+		t.Errorf("waiting placeholder lost:\n%s", view)
+	}
+}
+
 // The status bar is exactly pane width — never wider.
 func TestStatusBarWidth(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "REVIEW.md")
