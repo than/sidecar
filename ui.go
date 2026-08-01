@@ -27,6 +27,15 @@ func flashOff() tea.Cmd {
 	return tea.Tick(flashDuration, func(time.Time) tea.Msg { return flashOffMsg{} })
 }
 
+// lineFlashOffMsg clears the subtle post-reload line-background flash.
+type lineFlashOffMsg struct{}
+
+const lineFlashDuration = 500 * time.Millisecond
+
+func lineFlashOff() tea.Cmd {
+	return tea.Tick(lineFlashDuration, func(time.Time) tea.Msg { return lineFlashOffMsg{} })
+}
+
 type model struct {
 	path string
 
@@ -47,10 +56,17 @@ type model struct {
 
 	// flash briefly highlights the status bar right after a live reload.
 	flash bool
+
+	// update pointer
+	prevBaseline  string       // content before the last change; diffed vs raw
+	renderedLines []string     // cached rendered lines for cheap recompose
+	changed       map[int]bool // changed line indices in the current render
+	lineFlash     bool         // subtle line-bg flash active
+	noFlash       bool         // --no-flash: suppress the line flash
 }
 
-func newModel(path string) model {
-	return model{path: path}
+func newModel(path string, noFlash bool) model {
+	return model{path: path, noFlash: noFlash}
 }
 
 func (m model) Init() tea.Cmd {
@@ -93,7 +109,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fileEventMsg:
 		if m.reload(false) {
 			m.flash = true
-			return m, flashOff()
+			cmds := []tea.Cmd{flashOff()}
+			if !m.noFlash {
+				m.lineFlash = true
+				m.recompose() // show the flash background immediately
+				cmds = append(cmds, lineFlashOff())
+			}
+			return m, tea.Batch(cmds...)
 		}
 		return m, nil
 
@@ -109,12 +131,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if changed {
 			m.flash = true
-			return m, tea.Batch(tick(), flashOff())
+			cmds := []tea.Cmd{tick(), flashOff()}
+			if !m.noFlash {
+				m.lineFlash = true
+				m.recompose()
+				cmds = append(cmds, lineFlashOff())
+			}
+			return m, tea.Batch(cmds...)
 		}
 		return m, tick()
 
 	case flashOffMsg:
 		m.flash = false
+		return m, nil
+
+	case lineFlashOffMsg:
+		m.lineFlash = false
+		m.recompose()
 		return m, nil
 	}
 
@@ -158,6 +191,9 @@ func (m *model) reload(force bool) (changed bool) {
 	if !force && !contentChanged {
 		return false
 	}
+	if contentChanged {
+		m.prevBaseline = m.raw // old content ("" on first load → no markers)
+	}
 	m.raw = raw
 
 	rendered, err := renderMarkdown(raw, m.renderWidth())
@@ -166,11 +202,34 @@ func (m *model) reload(force bool) (changed bool) {
 		m.vp.SetContent(fmt.Sprintf("\n  Render error: %v", err))
 		return false
 	}
+	lines := strings.Split(rendered, "\n")
 
-	offset := m.vp.YOffset // preserve scroll; if at top this is 0 and stays 0
-	m.vp.SetContent(rendered)
-	m.vp.SetYOffset(offset) // viewport clamps to the new content height
+	var changedMap map[int]bool
+	if m.prevBaseline != "" {
+		if base, berr := renderMarkdown(m.prevBaseline, m.renderWidth()); berr == nil {
+			changedMap = changedLines(strings.Split(base, "\n"), lines)
+		}
+	}
+	m.renderedLines = lines
+	m.changed = changedMap
+
+	display := composeMarked(lines, changedMap, m.lineFlash && !m.noFlash, m.renderWidth())
+	offset := m.vp.YOffset
+	m.vp.SetContent(display)
+	m.vp.SetYOffset(offset)
 	return contentChanged
+}
+
+// recompose re-renders the cached lines for the current flash state without
+// re-reading the file — used when only the flash toggles.
+func (m *model) recompose() {
+	if m.renderedLines == nil {
+		return
+	}
+	display := composeMarked(m.renderedLines, m.changed, m.lineFlash && !m.noFlash, m.renderWidth())
+	offset := m.vp.YOffset
+	m.vp.SetContent(display)
+	m.vp.SetYOffset(offset)
 }
 
 // renderWidth is the markdown wrap width: pane width minus 2, never wider

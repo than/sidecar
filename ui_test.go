@@ -13,7 +13,7 @@ import (
 
 func testModel(t *testing.T, path string) model {
 	t.Helper()
-	m := newModel(path)
+	m := newModel(path, false)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
 	return next.(model)
 }
@@ -177,6 +177,74 @@ func TestReloadFlash(t *testing.T) {
 	m = next.(model)
 	if m.flash {
 		t.Error("flash set without a content change")
+	}
+}
+
+func TestUpdatePointerMarksChangedBullet(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SIDECAR.md")
+	writeFile(t, path, "# T\n\n- alpha\n- beta\n")
+	m := testModel(t, path)
+
+	// change one bullet
+	writeFile(t, path, "# T\n\n- alpha\n- BETA\n")
+	next, _ := m.Update(fileEventMsg{})
+	m = next.(model)
+
+	view := stripANSI(m.vp.View())
+	if !strings.Contains(view, "▸ BETA") {
+		t.Errorf("changed bullet not marked with ▸:\n%s", view)
+	}
+	if !m.lineFlash {
+		t.Error("lineFlash should be set after a content change")
+	}
+}
+
+func TestUpdatePointerInitialLoadUnmarked(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SIDECAR.md")
+	writeFile(t, path, "# T\n\n- alpha\n")
+	m := testModel(t, path) // first load renders via WindowSizeMsg
+
+	if strings.Contains(stripANSI(m.vp.View()), "▸") {
+		t.Errorf("initial load should mark nothing:\n%s", stripANSI(m.vp.View()))
+	}
+}
+
+func TestUpdatePointerFlashOffKeepsMarker(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SIDECAR.md")
+	writeFile(t, path, "# T\n\n- alpha\n")
+	m := testModel(t, path)
+	writeFile(t, path, "# T\n\n- ALPHA\n")
+	next, _ := m.Update(fileEventMsg{})
+	m = next.(model)
+
+	// flash on → background present
+	if !strings.Contains(m.vp.View(), "\x1b[48;2;") {
+		t.Error("expected flash background right after change")
+	}
+	next, _ = m.Update(lineFlashOffMsg{})
+	m = next.(model)
+	if strings.Contains(m.vp.View(), "\x1b[48;2;") {
+		t.Error("flash background should clear on lineFlashOffMsg")
+	}
+	if !strings.Contains(stripANSI(m.vp.View()), "▸ ALPHA") {
+		t.Error("▸ marker should persist after flash clears")
+	}
+}
+
+func TestUpdatePointerNoFlashFlag(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SIDECAR.md")
+	writeFile(t, path, "# T\n\n- alpha\n")
+	m := newModel(path, true) // noFlash
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	m = next.(model)
+	writeFile(t, path, "# T\n\n- ALPHA\n")
+	next, _ = m.Update(fileEventMsg{})
+	m = next.(model)
+	if strings.Contains(m.vp.View(), "\x1b[48;2;") {
+		t.Error("no-flash mode should never inject a background")
+	}
+	if !strings.Contains(stripANSI(m.vp.View()), "▸ ALPHA") {
+		t.Error("▸ marker should still work with --no-flash")
 	}
 }
 

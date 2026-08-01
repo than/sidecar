@@ -58,7 +58,7 @@ func main() {
 
 	offerCreate(abs) // if missing and interactive, offer to scaffold before opening
 
-	p := tea.NewProgram(newModel(abs),
+	p := tea.NewProgram(newModel(abs, false),
 		tea.WithAltScreen(),
 		// No mouse capture: keeps the terminal's native text selection and
 		// clickable links working. Scroll with the keyboard (see keys below).
