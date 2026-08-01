@@ -305,6 +305,28 @@ func TestUpdatePointerEmptyBaselineThenLine(t *testing.T) {
 	}
 }
 
+// r key should flash like a file event when a real change is loaded.
+func TestUpdatePointerRKeyFlashesOnChange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SIDECAR.md")
+	writeFile(t, path, "# T\n\n- alpha\n")
+	m := testModel(t, path)
+
+	// Change on disk, then force-reload with `r` before any fileEventMsg.
+	writeFile(t, path, "# T\n\n- ALPHA\n")
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = next.(model)
+
+	if !m.lineFlash {
+		t.Error("r after a real change should set the line flash")
+	}
+	if cmd == nil {
+		t.Error("r after a change should schedule flash-off commands")
+	}
+	if !strings.Contains(stripANSI(m.vp.View()), "▸ ALPHA") {
+		t.Errorf("r should render the change markers:\n%s", stripANSI(m.vp.View()))
+	}
+}
+
 // The status bar is exactly pane width — never wider.
 func TestStatusBarWidth(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "REVIEW.md")

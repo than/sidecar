@@ -90,7 +90,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "r":
-			m.reload(true)
+			if m.reload(true) {
+				m.flash = true
+				cmds := []tea.Cmd{flashOff()}
+				if !m.noFlash {
+					m.lineFlash = true
+					m.recompose()
+					cmds = append(cmds, lineFlashOff())
+				}
+				return m, tea.Batch(cmds...)
+			}
 			return m, nil
 		case "g", "home":
 			m.vp.GotoTop()

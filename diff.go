@@ -155,10 +155,14 @@ func applyLineBg(ln, hex string, width int) string {
 	return bg + body + pad + reset
 }
 
-// hexToRGB parses "#RRGGBB" into its components.
+// hexToRGB parses "#RRGGBB" into its components. Input is expected to be a
+// valid hex color const; on a malformed value it falls back to a visible
+// mid-grey rather than silently yielding black.
 func hexToRGB(hex string) (int, int, int) {
 	hex = strings.TrimPrefix(hex, "#")
 	var r, g, b int
-	fmt.Sscanf(hex, "%02x%02x%02x", &r, &g, &b)
+	if n, err := fmt.Sscanf(hex, "%02x%02x%02x", &r, &g, &b); n != 3 || err != nil {
+		return 128, 128, 128
+	}
 	return r, g, b
 }
