@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
-
-func stripANSI(s string) string {
-	return ansiRE.ReplaceAllString(s, "")
-}
-
 func renderFixture(t *testing.T, width int) string {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/REVIEW.md")
