@@ -110,6 +110,36 @@ func TestComposeMarkedNoFlashNoBackground(t *testing.T) {
 	}
 }
 
+func TestComposeMarkedWrappedContinuationMarksOwningBullet(t *testing.T) {
+	// A long bullet wrapped onto a continuation line; the edit landed on the
+	// continuation (index 1). The ▸ must appear on the bullet line (index 0).
+	lines := []string{
+		"\x1b[38;2;208;208;208m• \x1b[0malpha the first",
+		"\x1b[38;2;208;208;208m  and its wrapped tail\x1b[0m",
+	}
+	out := composeMarked(lines, map[int]bool{1: true}, false, 40)
+	got := strings.Split(stripANSI(out), "\n")
+	if !strings.Contains(got[0], "▸ ") {
+		t.Errorf("owning bullet not marked:\n%q", got[0])
+	}
+	if strings.Contains(got[1], "▸") {
+		t.Errorf("continuation line should not itself get ▸:\n%q", got[1])
+	}
+}
+
+func TestComposeMarkedChangedProseAfterBlankNoMarker(t *testing.T) {
+	// A changed non-bullet line preceded by a blank line: the backward walk
+	// stops at the blank, so nothing is marked.
+	lines := []string{
+		"",
+		"\x1b[38;2;208;208;208mjust prose\x1b[0m",
+	}
+	out := composeMarked(lines, map[int]bool{1: true}, false, 40)
+	if strings.Contains(out, "▸") {
+		t.Errorf("prose after a blank should get no marker:\n%q", stripANSI(out))
+	}
+}
+
 func TestChangedLinesTrimmedContext(t *testing.T) {
 	old := []string{"h", "a", "b", "c", "z"}
 	nw := []string{"h", "a", "X", "c", "z"} // only index 2 changed

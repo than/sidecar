@@ -212,6 +212,9 @@ func (m *model) reload(force bool) (changed bool) {
 
 	var changedMap map[int]bool
 	if m.prevBaseline != "" {
+		// Deliberate degrade: if the baseline fails to render we show no
+		// markers this pass rather than surface an error — the content render
+		// above already succeeded.
 		if base, berr := renderMarkdown(m.prevBaseline, m.renderWidth()); berr == nil {
 			changedMap = changedLines(strings.Split(base, "\n"), lines)
 		}

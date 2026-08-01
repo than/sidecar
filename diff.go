@@ -46,7 +46,7 @@ func changedLines(oldLines, newLines []string) map[int]bool {
 	// Guard against a pathological table on very large files: past this many
 	// cells, skip line marking entirely rather than allocate hundreds of MB
 	// per render. Real queues are far smaller; this only trips on huge docs.
-	const maxDiffCells = 4 << 20 // ~32 MB of int cells
+	const maxDiffCells = 1 << 18 // ~2 MB of int cells; ample for any real queue
 	if len(om)*len(nm) > maxDiffCells {
 		return changed // empty — no markers, but the render still happens
 	}
@@ -93,15 +93,34 @@ func composeMarked(lines []string, changed map[int]bool, flash bool, width int) 
 	tr, tg, tb := hexToRGB(colorText)
 	updatedMark := fmt.Sprintf("\x1b[1;38;2;%d;%d;%dm▸ \x1b[22;38;2;%d;%d;%dm", ur, ug, ub, tr, tg, tb)
 
+	// Resolve which bullet lines to mark. A changed bullet marks itself; a
+	// changed non-bullet line (e.g. a wrapped continuation of a long item)
+	// marks its owning bullet — the nearest preceding bullet line, bounded by a
+	// blank line so we don't cross into a previous block.
+	swap := map[int]bool{}
+	for i := range lines {
+		if !changed[i] {
+			continue
+		}
+		if isBulletLine(lines[i]) {
+			swap[i] = true
+			continue
+		}
+		for j := i - 1; j >= 0 && visibleWidth(lines[j]) > 0; j-- {
+			if isBulletLine(lines[j]) {
+				swap[j] = true
+				break
+			}
+		}
+	}
+
 	out := make([]string, len(lines))
 	for i, ln := range lines {
-		if changed[i] {
-			if isBulletLine(ln) {
-				ln = strings.Replace(ln, "• ", updatedMark, 1)
-			}
-			if flash && visibleWidth(ln) > 0 {
-				ln = applyLineBg(ln, colorFlashLineBg, width)
-			}
+		if swap[i] {
+			ln = strings.Replace(ln, "• ", updatedMark, 1)
+		}
+		if changed[i] && flash && visibleWidth(ln) > 0 {
+			ln = applyLineBg(ln, colorFlashLineBg, width)
 		}
 		out[i] = ln
 	}
