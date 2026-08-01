@@ -21,6 +21,7 @@ usage: sidecar [file.md]         (default: ./SIDECAR.md)
        sidecar init [file.md]    scaffold the file; offer to git-exclude it
                                  and wire it into Claude Code
        sidecar --static [file]   render once to stdout and exit (no TUI)
+       sidecar --no-flash [file] disable the subtle change-flash (▸ still shows)
 
 keys:  j/k, arrows, PgUp/PgDn                scroll
        g / G                                top / bottom
@@ -32,7 +33,7 @@ moment it appears, then live-reloads on every change.
 `
 
 func main() {
-	path := defaultFile
+	// Subcommands dispatch on the first arg, exactly as before.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "-h", "--help":
@@ -45,8 +46,18 @@ func main() {
 			os.Exit(runStatic(os.Args[2:]))
 		case "init":
 			os.Exit(runInit(os.Args[2:]))
+		}
+	}
+
+	// Viewer mode: an optional file path plus the --no-flash flag, any order.
+	path := defaultFile
+	noFlash := false
+	for _, a := range os.Args[1:] {
+		switch a {
+		case "--no-flash":
+			noFlash = true
 		default:
-			path = os.Args[1]
+			path = a
 		}
 	}
 
@@ -58,10 +69,8 @@ func main() {
 
 	offerCreate(abs) // if missing and interactive, offer to scaffold before opening
 
-	p := tea.NewProgram(newModel(abs, false),
+	p := tea.NewProgram(newModel(abs, noFlash),
 		tea.WithAltScreen(),
-		// No mouse capture: keeps the terminal's native text selection and
-		// clickable links working. Scroll with the keyboard (see keys below).
 	)
 	go watchFile(abs, p.Send)
 
