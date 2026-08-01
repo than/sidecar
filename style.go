@@ -16,17 +16,19 @@ const (
 	// Tune this one const to adjust every link.
 	colorLink = "#4EC9E5"
 
-	colorText     = "#D0D0D0" // body text
-	colorHeading  = "#D19A66" // muted amber, h2/h3
-	colorH1Fg     = "#000000" // h1 badge text
-	colorH1Bg     = "#AF87FF" // h1 badge background, light lavender
-	colorCodeFg   = "#FF5F5F" // inline code
-	colorCodeBg   = "#303030" // inline code background
-	colorCodeDim  = "#808080" // fenced code blocks
-	colorRule     = "#585858" // horizontal rules
-	colorStatusFg = "#8A8F98" // status bar text
-	colorStatusHi = "#C8CCD4" // status bar filename
-	colorStatusBg = "#26262A" // status bar background
+	colorText        = "#D0D0D0" // body text
+	colorHeading     = "#D19A66" // muted amber, h2/h3
+	colorH1Fg        = "#000000" // h1 badge text
+	colorH1Bg        = "#AF87FF" // h1 badge background, light lavender
+	colorCodeFg      = "#FF5F5F" // inline code
+	colorCodeBg      = "#303030" // inline code background
+	colorCodeDim     = "#808080" // fenced code blocks
+	colorRule        = "#585858" // horizontal rules
+	colorStatusFg    = "#8A8F98" // status bar text
+	colorStatusHi    = "#C8CCD4" // status bar filename
+	colorStatusBg    = "#26262A" // status bar background
+	colorUpdated     = "#5FE3A1" // bright ▸ marking a changed line
+	colorFlashLineBg = "#2A2A33" // subtle bg lightening on a just-changed line
 )
 
 func ptr[T any](v T) *T { return &v }

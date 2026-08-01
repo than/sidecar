@@ -1,7 +1,10 @@
 // diff_test.go
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func idx(m map[int]bool) []int {
 	out := []int{}
@@ -54,5 +57,55 @@ func TestChangedLinesIgnoresANSI(t *testing.T) {
 	nw := []string{"\x1b[32mhello\x1b[0m"} // same text, different color
 	if got := idx(changedLines(old, nw)); len(got) != 0 {
 		t.Errorf("restyle-only → %v, want none", got)
+	}
+}
+
+func TestComposeMarkedBulletSwap(t *testing.T) {
+	// A changed bullet line: the literal "• " becomes a styled "▸ ".
+	lines := []string{"\x1b[38;2;208;208;208m• \x1b[0malpha"}
+	out := composeMarked(lines, map[int]bool{0: true}, false, 40)
+	if strings.Contains(stripANSI(out), "• ") {
+		t.Errorf("bullet not replaced:\n%q", out)
+	}
+	if !strings.Contains(stripANSI(out), "▸ alpha") {
+		t.Errorf("expected ▸ alpha, got:\n%q", stripANSI(out))
+	}
+}
+
+func TestComposeMarkedUnchangedLineUntouched(t *testing.T) {
+	lines := []string{"\x1b[38;2;208;208;208m• \x1b[0malpha"}
+	out := composeMarked(lines, map[int]bool{}, false, 40) // nothing changed
+	if out != lines[0] {
+		t.Errorf("unchanged line altered:\n%q", out)
+	}
+}
+
+func TestComposeMarkedNonBulletNoMarker(t *testing.T) {
+	// A changed non-bullet line gets no ▸ (bullets only), and without flash
+	// its text is unchanged.
+	lines := []string{"\x1b[38;2;209;154;102m▍ Heading\x1b[0m"}
+	out := composeMarked(lines, map[int]bool{0: true}, false, 40)
+	if strings.Contains(out, "▸") {
+		t.Errorf("non-bullet line should not get ▸:\n%q", out)
+	}
+}
+
+func TestComposeMarkedFlashAddsBackground(t *testing.T) {
+	lines := []string{"\x1b[38;2;208;208;208m• \x1b[0malpha"}
+	out := composeMarked(lines, map[int]bool{0: true}, true, 40)
+	if !strings.Contains(out, "\x1b[48;2;") {
+		t.Errorf("flash should inject a background SGR:\n%q", out)
+	}
+	// The ▸ still shows through the flash.
+	if !strings.Contains(stripANSI(out), "▸ alpha") {
+		t.Errorf("▸ missing under flash:\n%q", stripANSI(out))
+	}
+}
+
+func TestComposeMarkedNoFlashNoBackground(t *testing.T) {
+	lines := []string{"\x1b[38;2;208;208;208m• \x1b[0malpha"}
+	out := composeMarked(lines, map[int]bool{0: true}, false, 40)
+	if strings.Contains(out, "\x1b[48;2;") {
+		t.Errorf("no flash should not inject a background:\n%q", out)
 	}
 }

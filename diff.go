@@ -2,7 +2,11 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -59,4 +63,57 @@ func changedLines(oldLines, newLines []string) map[int]bool {
 		}
 	}
 	return changed
+}
+
+// composeMarked renders the display string: changed bullet lines get their
+// "• " swapped for a bright "▸ ", and (when flash is true) every changed line
+// gets a subtle background tint. Order matters — the bullet is swapped first so
+// applyLineBg re-establishes the background after the reset the swap introduces.
+func composeMarked(lines []string, changed map[int]bool, flash bool, width int) string {
+	updatedMark := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(colorUpdated)).Bold(true).Render("▸ ")
+
+	out := make([]string, len(lines))
+	for i, ln := range lines {
+		if changed[i] {
+			if isBulletLine(ln) {
+				ln = strings.Replace(ln, "• ", updatedMark, 1)
+			}
+			if flash {
+				ln = applyLineBg(ln, colorFlashLineBg, width)
+			}
+		}
+		out[i] = ln
+	}
+	return strings.Join(out, "\n")
+}
+
+// isBulletLine reports whether the line's first visible content is glamour's
+// "• " item prefix (so a "•" inside body text isn't matched).
+func isBulletLine(ln string) bool {
+	t := strings.TrimLeft(stripANSI(ln), " ")
+	return strings.HasPrefix(t, "• ")
+}
+
+// applyLineBg tints the whole visible line with the given hex background,
+// re-applying it after each SGR reset (a reset would otherwise clear the
+// background mid-line), and pads to width so the tint spans the pane.
+func applyLineBg(ln, hex string, width int) string {
+	r, g, b := hexToRGB(hex)
+	bg := fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r, g, b)
+	const reset = "\x1b[0m"
+	body := strings.ReplaceAll(ln, reset, reset+bg)
+	pad := ""
+	if v := visibleWidth(ln); v < width {
+		pad = strings.Repeat(" ", width-v)
+	}
+	return bg + body + pad + reset
+}
+
+// hexToRGB parses "#RRGGBB" into its components.
+func hexToRGB(hex string) (int, int, int) {
+	hex = strings.TrimPrefix(hex, "#")
+	var r, g, b int
+	fmt.Sscanf(hex, "%02x%02x%02x", &r, &g, &b)
+	return r, g, b
 }
