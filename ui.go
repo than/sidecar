@@ -19,12 +19,21 @@ type fileEventMsg struct{}
 type tickMsg time.Time
 
 // flashOffMsg clears the post-reload status-bar highlight.
-type flashOffMsg struct{}
+type flashOffMsg struct{ gen int }
 
 const flashDuration = 450 * time.Millisecond
 
-func flashOff() tea.Cmd {
-	return tea.Tick(flashDuration, func(time.Time) tea.Msg { return flashOffMsg{} })
+func flashOff(gen int) tea.Cmd {
+	return tea.Tick(flashDuration, func(time.Time) tea.Msg { return flashOffMsg{gen} })
+}
+
+// lineFlashOffMsg clears the subtle post-reload line-background flash.
+type lineFlashOffMsg struct{ gen int }
+
+const lineFlashDuration = 500 * time.Millisecond
+
+func lineFlashOff(gen int) tea.Cmd {
+	return tea.Tick(lineFlashDuration, func(time.Time) tea.Msg { return lineFlashOffMsg{gen} })
 }
 
 type model struct {
@@ -47,10 +56,24 @@ type model struct {
 
 	// flash briefly highlights the status bar right after a live reload.
 	flash bool
+
+	// update pointer
+	prevBaseline string // content before the last change; diffed vs raw
+	// hasBaseline is true once a prior successful content render exists — it
+	// distinguishes "no baseline yet" (very first render, always unmarked)
+	// from "baseline was a legitimately empty file" (prevBaseline == "" but
+	// still a real prior state to diff against). Set true at the end of the
+	// first successful reload, so that reload itself marks nothing.
+	hasBaseline   bool
+	renderedLines []string     // cached rendered lines for cheap recompose
+	changed       map[int]bool // changed line indices in the current render
+	lineFlash     bool         // subtle line-bg flash active
+	noFlash       bool         // --no-flash: suppress the line flash
+	flashGen      int          // bumped on each change; a stale flash-off msg is ignored
 }
 
-func newModel(path string) model {
-	return model{path: path}
+func newModel(path string, noFlash bool) model {
+	return model{path: path, noFlash: noFlash}
 }
 
 func (m model) Init() tea.Cmd {
@@ -68,7 +91,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "r":
-			m.reload(true)
+			if m.reload(true) {
+				m.flashGen++
+				gen := m.flashGen
+				m.flash = true
+				cmds := []tea.Cmd{flashOff(gen)}
+				if !m.noFlash {
+					m.lineFlash = true
+					m.recompose()
+					cmds = append(cmds, lineFlashOff(gen))
+				}
+				return m, tea.Batch(cmds...)
+			}
 			return m, nil
 		case "g", "home":
 			m.vp.GotoTop()
@@ -92,8 +126,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fileEventMsg:
 		if m.reload(false) {
+			m.flashGen++
+			gen := m.flashGen
 			m.flash = true
-			return m, flashOff()
+			cmds := []tea.Cmd{flashOff(gen)}
+			if !m.noFlash {
+				m.lineFlash = true
+				m.recompose() // show the flash background immediately
+				cmds = append(cmds, lineFlashOff(gen))
+			}
+			return m, tea.Batch(cmds...)
 		}
 		return m, nil
 
@@ -108,13 +150,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			changed = m.reload(false)
 		}
 		if changed {
+			m.flashGen++
+			gen := m.flashGen
 			m.flash = true
-			return m, tea.Batch(tick(), flashOff())
+			cmds := []tea.Cmd{tick(), flashOff(gen)}
+			if !m.noFlash {
+				m.lineFlash = true
+				m.recompose()
+				cmds = append(cmds, lineFlashOff(gen))
+			}
+			return m, tea.Batch(cmds...)
 		}
 		return m, tick()
 
 	case flashOffMsg:
+		if msg.gen != m.flashGen {
+			return m, nil
+		}
 		m.flash = false
+		return m, nil
+
+	case lineFlashOffMsg:
+		if msg.gen != m.flashGen {
+			return m, nil
+		}
+		m.lineFlash = false
+		m.recompose()
 		return m, nil
 	}
 
@@ -145,6 +206,10 @@ func (m *model) reload(force bool) (changed bool) {
 			m.vp.SetContent(fmt.Sprintf("\n  Error reading %s:\n  %v", m.path, err))
 		}
 		m.vp.GotoTop()
+		m.renderedLines = nil
+		m.changed = nil
+		m.lineFlash = false
+		m.hasBaseline = false
 		return false
 	}
 	if st, err := os.Stat(m.path); err == nil {
@@ -158,19 +223,61 @@ func (m *model) reload(force bool) (changed bool) {
 	if !force && !contentChanged {
 		return false
 	}
+	if contentChanged {
+		m.prevBaseline = m.raw // old content ("" on first load → no markers)
+	}
 	m.raw = raw
+
+	// First successful render — and after an error/missing-file recovery, where
+	// hasBaseline was reset — seed the baseline to the content itself, so a
+	// forced re-render (resize, r) before any real change diffs against itself
+	// and marks nothing.
+	if !m.hasBaseline {
+		m.prevBaseline = raw
+	}
 
 	rendered, err := renderMarkdown(raw, m.renderWidth())
 	if err != nil {
 		m.loadErr = err
 		m.vp.SetContent(fmt.Sprintf("\n  Render error: %v", err))
+		m.renderedLines = nil
+		m.changed = nil
+		m.lineFlash = false
+		m.hasBaseline = false
 		return false
 	}
+	lines := strings.Split(rendered, "\n")
 
-	offset := m.vp.YOffset // preserve scroll; if at top this is 0 and stays 0
-	m.vp.SetContent(rendered)
-	m.vp.SetYOffset(offset) // viewport clamps to the new content height
+	var changedMap map[int]bool
+	if m.hasBaseline {
+		// Deliberate degrade: if the baseline fails to render we show no
+		// markers this pass rather than surface an error — the content render
+		// above already succeeded.
+		if base, berr := renderMarkdown(m.prevBaseline, m.renderWidth()); berr == nil {
+			changedMap = changedLines(strings.Split(base, "\n"), lines)
+		}
+	}
+	m.renderedLines = lines
+	m.changed = changedMap
+
+	display := composeMarked(lines, changedMap, m.lineFlash && !m.noFlash, m.renderWidth())
+	offset := m.vp.YOffset
+	m.vp.SetContent(display)
+	m.vp.SetYOffset(offset)
+	m.hasBaseline = true
 	return contentChanged
+}
+
+// recompose re-renders the cached lines for the current flash state without
+// re-reading the file — used when only the flash toggles.
+func (m *model) recompose() {
+	if m.renderedLines == nil || m.fileMissing || m.loadErr != nil {
+		return
+	}
+	display := composeMarked(m.renderedLines, m.changed, m.lineFlash && !m.noFlash, m.renderWidth())
+	offset := m.vp.YOffset
+	m.vp.SetContent(display)
+	m.vp.SetYOffset(offset)
 }
 
 // renderWidth is the markdown wrap width: pane width minus 2, never wider
