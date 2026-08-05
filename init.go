@@ -586,7 +586,9 @@ Choice [E/g/n]: `, rel)
 
 	switch readChoice() {
 	case "g":
-		writeIgnore(filepath.Join(root, ".gitignore"), rel)
+		gitignore := filepath.Join(root, ".gitignore")
+		writeIgnore(gitignore, rel)
+		excludeCustomPathSnapshotDirTo(gitignore, rel)
 	case "n":
 		fmt.Println("Left tracked.")
 	default: // "e" or Enter → recommended
@@ -644,6 +646,15 @@ func applyExcludeDefault(dir, rel string) {
 func excludeCustomPathSnapshotDir(dir, rel string) {
 	sidecarRel := filepath.Join(filepath.Dir(rel), sidecarDirName) + "/"
 	applyExcludeDefault(dir, sidecarRel)
+}
+
+// excludeCustomPathSnapshotDirTo is excludeCustomPathSnapshotDir's
+// counterpart for callers that already know the target ignore file (e.g. a
+// committed .gitignore from the [g] choice) rather than resolving
+// .git/info/exclude via git. Idempotent via writeIgnore/appendLine.
+func excludeCustomPathSnapshotDirTo(ignoreFile, rel string) {
+	sidecarRel := filepath.Join(filepath.Dir(rel), sidecarDirName) + "/"
+	writeIgnore(ignoreFile, sidecarRel)
 }
 
 func writeIgnore(path, line string) {

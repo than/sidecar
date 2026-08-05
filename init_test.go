@@ -265,6 +265,49 @@ func TestExcludeSidecarDir(t *testing.T) {
 	}
 }
 
+// withStdin redirects os.Stdin to input for the duration of f, restoring it
+// afterward.
+func withStdin(t *testing.T, input string, f func()) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.WriteString(input); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	old := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = old }()
+	f()
+}
+
+// R3: the [g] .gitignore branch of offerGitExclude must also exclude the
+// .sidecar/ snapshot dir that `sidecar diff` creates beside a custom board
+// path — not just the board file itself.
+func TestOfferGitExcludeGitignoreBranchExcludesSnapshotDir(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	target := filepath.Join(dir, "notes.md")
+	os.WriteFile(target, []byte("# notes\n"), 0o644)
+
+	withStdin(t, "g\n", func() {
+		offerGitExclude(target)
+	})
+
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if !strings.Contains(string(data), "notes.md") {
+		t.Errorf(".gitignore missing board file: %q", data)
+	}
+	if !strings.Contains(string(data), sidecarDirName+"/") {
+		t.Errorf(".gitignore missing %s/ snapshot dir: %q", sidecarDirName, data)
+	}
+}
+
 func TestReconcileHookEntryGuarded(t *testing.T) {
 	entry := reconcileHookEntry(filepath.Join(sidecarDirName, "sidecar.md"), defaultSections())
 	cmd := entry["hooks"].([]any)[0].(map[string]any)["command"].(string)
