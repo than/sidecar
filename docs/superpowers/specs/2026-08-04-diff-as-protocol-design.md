@@ -96,7 +96,9 @@ reminder line still follows.
    current static reminder. The hook degrades to today's behavior instead
    of erroring on machines without the binary.
 4. **Migration** — when a root-level SIDECAR.md exists, offer to move it
-   to `.sidecar/sidecar.md` and `git rm --cached` it. Re-running init
+   to `.sidecar/sidecar.md`, and `git rm --cached` it when tracked (some
+   setups already exclude it locally, e.g. via `.git/info/exclude`).
+   Re-running init
    upgrades a prior sidecar hook in place, as it does today.
 5. Updates the CLAUDE.md note to point at `.sidecar/sidecar.md`.
 
