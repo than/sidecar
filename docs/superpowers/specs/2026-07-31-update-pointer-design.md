@@ -6,7 +6,7 @@ Status: approved design, pending spec review
 ## Problem
 
 When the watched file changes, the viewer re-renders the whole document and
-flashes the status bar amber, but gives no cue to *where* the change was. On a
+flashes the status bar amber, but gives no cue to _where_ the change was. On a
 long queue the human has to hunt for what moved. Sidecar should point at the
 changed lines.
 
@@ -15,19 +15,19 @@ changed lines.
 1. **Per-line change detection.** On each render, diff the previous baseline
    content against the current content at the current pane width, producing the
    set of rendered lines that are new/changed.
-2. **Persistent `▸` marker (bullets only).** Every changed line that is a
+2. **Persistent&#x20;**`▸`**&#x20;marker (bullets only).** Every changed line that is a
    bullet has glamour's `• ` prefix replaced with a bright `▸ ` (identical
    width — no layout shift). Changed non-bullet lines (headings, prose) get no
    marker. The marker persists until the next content change.
 3. **Subtle one-shot flash.** On a content change, all changed lines get a
-   gentle background lightening for ~500 ms, then a timer clears it, leaving the
+   gentle background lightening for \~500 ms, then a timer clears it, leaving the
    `▸` behind. Single fade, no repeat/strobe. Toggleable with `--no-flash`
    (flash on by default). This is independent of the existing amber status-bar
    flash.
 
 ## Change detection (resize-proof)
 
-The model keeps `prevBaseline string` — the raw content as of *before* the most
+The model keeps `prevBaseline string` — the raw content as of _before_ the most
 recent content change. Markers are always computed as a line-level diff of
 `render(prevBaseline, width)` vs `render(raw, width)`, recomputed on every
 render. Because it re-diffs from raw at the current width, the marker set
