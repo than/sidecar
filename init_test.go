@@ -249,6 +249,19 @@ func TestReconcileMessageCustomSections(t *testing.T) {
 	}
 }
 
+// R4: an empty labels list (unparseable board) must drop the " Sections: …"
+// clause entirely rather than render "Sections: .", while keeping the
+// sentinel phrase intact.
+func TestReconcileMessageLabelsEmptyDropsSectionsClause(t *testing.T) {
+	msg := reconcileMessageLabels("SIDECAR.md", nil)
+	if strings.Contains(msg, "Sections:") {
+		t.Errorf("expected no Sections clause for empty labels:\n%s", msg)
+	}
+	if !strings.Contains(msg, hookSentinel) {
+		t.Errorf("reconcile message missing sentinel:\n%s", msg)
+	}
+}
+
 func TestExcludeSidecarDir(t *testing.T) {
 	dir := t.TempDir()
 	mustRun(t, dir, "git", "init", "-q")

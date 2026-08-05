@@ -82,6 +82,29 @@ func TestRunDiffReportsMoveThenGoesSilent(t *testing.T) {
 	})
 }
 
+// R4: an unparseable board (no ## headings) has no section labels, so the
+// closing reminder's last line must drop the "Sections:" clause rather than
+// render "Sections: ." — but must still carry the sentinel phrase.
+func TestRunDiffUnparseableBoardOmitsSectionsClause(t *testing.T) {
+	dir := t.TempDir()
+	board := filepath.Join(dir, sidecarDirName, "sidecar.md")
+	os.MkdirAll(filepath.Join(dir, sidecarDirName), 0o755)
+	os.WriteFile(board, []byte("plain text, no headings\n"), 0o644)
+	withWorkDir(t, dir, func() {
+		captureStdout(t, func() { runDiff(nil) }) // first run seeds snapshot
+		os.WriteFile(board, []byte("different plain text, still no headings\n"), 0o644)
+		out := captureStdout(t, func() { runDiff(nil) })
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		last := lines[len(lines)-1]
+		if !strings.Contains(last, "the sidecar review queue") {
+			t.Errorf("last line missing sentinel: %q", last)
+		}
+		if strings.Contains(last, "Sections:") {
+			t.Errorf("last line should omit Sections clause: %q", last)
+		}
+	})
+}
+
 func TestRunDiffMissingBoardSilent(t *testing.T) {
 	withWorkDir(t, t.TempDir(), func() {
 		out := captureStdout(t, func() {

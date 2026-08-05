@@ -319,9 +319,16 @@ func writeClaudeNote(root, rel string, sections []Section) {
 const hookSentinel = "the sidecar review queue"
 
 // reconcileMessageLabels renders the per-turn reminder from plain heading
-// labels. reconcileMessage adapts []Section to it.
+// labels. reconcileMessage adapts []Section to it. An unparseable board
+// yields no labels — the "Sections: …" clause is dropped entirely rather
+// than rendering the empty-list degenerate "Sections: .", while the sentinel
+// phrase stays intact either way.
 func reconcileMessageLabels(rel string, labels []string) string {
-	return fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `sidecar %s`. Sections: %s.", rel, hookSentinel, rel, strings.Join(labels, " / "))
+	msg := fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `sidecar %s`.", rel, hookSentinel, rel)
+	if len(labels) == 0 {
+		return msg
+	}
+	return msg + fmt.Sprintf(" Sections: %s.", strings.Join(labels, " / "))
 }
 
 // reconcileMessage is the per-turn reminder the hook echoes. It's conditional
