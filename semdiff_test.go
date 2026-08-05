@@ -127,6 +127,33 @@ func TestDiffLinesFallbackWhenUnparsable(t *testing.T) {
 	}
 }
 
+func TestUnifiedU0InsertAtStartOfNonEmptyFile(t *testing.T) {
+	out := unifiedU0("c\n", "x\nc\n")
+	if len(out) == 0 || out[0] != "@@ -1,0 +1 @@" {
+		t.Fatalf("out = %q, want header @@ -1,0 +1 @@", out)
+	}
+	if !strings.Contains(strings.Join(out, "\n"), "+x") {
+		t.Errorf("missing +x:\n%s", out)
+	}
+}
+
+func TestUnifiedU0EmptyOldFile(t *testing.T) {
+	out := unifiedU0("", "x\n")
+	if len(out) == 0 || out[0] != "@@ -0,0 +1 @@" {
+		t.Fatalf("out = %q, want header @@ -0,0 +1 @@", out)
+	}
+	if !strings.Contains(strings.Join(out, "\n"), "+x") {
+		t.Errorf("missing +x:\n%s", out)
+	}
+}
+
+func TestUnifiedU0TrailingNewlineOnly(t *testing.T) {
+	out := unifiedU0("a\nb", "a\nb\n")
+	if len(out) == 0 {
+		t.Fatal("expected non-empty diff for trailing-newline-only change, got none")
+	}
+}
+
 func TestDiffLinesFallbackWhenNoItemChanges(t *testing.T) {
 	// Both parse, but only the title changed — no item events, so fall back.
 	oldRaw := "# One\n\n## 🧠 Needs action\n\n- Same\n"

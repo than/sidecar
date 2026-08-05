@@ -140,8 +140,8 @@ func diffLines(oldRaw, newRaw string) []string {
 // unifiedU0 is a minimal unified diff with zero context lines: "@@" hunk
 // headers plus -/+ lines only. Computed in-process — no shelling out.
 func unifiedU0(oldRaw, newRaw string) []string {
-	o := strings.Split(strings.TrimSuffix(oldRaw, "\n"), "\n")
-	n := strings.Split(strings.TrimSuffix(newRaw, "\n"), "\n")
+	o := splitLines(oldRaw)
+	n := splitLines(newRaw)
 
 	// LCS table, same shape as changedLines in diff.go.
 	lcs := make([][]int32, len(o)+1)
@@ -220,15 +220,55 @@ func unifiedU0(oldRaw, newRaw string) []string {
 		// delete ops happened to land first in generation order.
 		if !haveO {
 			firstO = hunk[0].oi
+			// A zero anchor means "before line 1" only when the old side is
+			// genuinely empty. A non-empty old file whose insert lands at
+			// the very start still anchors at line 1, matching GNU diff
+			// -U0 (e.g. "c\n" → "x\nc\n" is "@@ -1,0 +1 @@", not "-0,0").
+			if firstO == 0 && len(o) > 0 {
+				firstO = 1
+			}
 		}
 		if !haveN {
 			firstN = hunk[0].ni
+			if firstN == 0 && len(n) > 0 {
+				firstN = 1
+			}
 		}
 		out = append(out, hunkHeader(firstO, len(dels), firstN, len(adds)))
 		out = append(out, dels...)
 		out = append(out, adds...)
 	}
+
+	// A trailing-newline-only difference (e.g. "a\nb" vs "a\nb\n") produces
+	// identical line slices, so the loop above emits no hunks even though
+	// the raw bytes differ. diffLines only calls unifiedU0 when the bytes
+	// differ, so returning nothing here would silently drop the change.
+	// Surface it as a change to the final line; exact GNU "\ No newline at
+	// end of file" annotations aren't required, just a non-empty diff.
+	if len(out) == 0 && oldRaw != newRaw {
+		last := ""
+		if len(o) > 0 {
+			last = o[len(o)-1]
+		} else if len(n) > 0 {
+			last = n[len(n)-1]
+		}
+		pos := len(o)
+		if pos == 0 {
+			pos = 1
+		}
+		out = append(out, hunkHeader(pos, 1, pos, 1), "-"+last, "+"+last)
+	}
 	return out
+}
+
+// splitLines splits raw text into lines without a trailing empty element for
+// a trailing "\n", and returns an empty slice (not [""]) for empty input —
+// strings.Split("", "\n") would otherwise yield a single phantom empty line.
+func splitLines(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(raw, "\n"), "\n")
 }
 
 // hunkHeader renders "@@ -a[,b] +c[,d] @@" in -U0 form: the count is omitted
