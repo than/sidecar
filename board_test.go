@@ -78,3 +78,23 @@ func TestNormalizeItem(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// F5: a tab-indented sub-bullet is a continuation line, not a new top-level
+// item — a leading tab must be treated like a leading space.
+func TestParseBoardTabIndentedSubBullet(t *testing.T) {
+	raw := "## 🧠 Needs action\n\n- Top item\n\t- sub\n"
+	b, ok := parseBoard(raw)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if len(b.Sections) != 1 {
+		t.Fatalf("sections = %d, want 1", len(b.Sections))
+	}
+	if len(b.Sections[0].Items) != 1 {
+		t.Fatalf("items = %d, want 1 (tab-indented line parsed as top-level)", len(b.Sections[0].Items))
+	}
+	want := "- Top item\n\t- sub"
+	if b.Sections[0].Items[0].Raw != want {
+		t.Errorf("raw = %q, want %q", b.Sections[0].Items[0].Raw, want)
+	}
+}

@@ -27,7 +27,7 @@ Any split-pane setup works — [Supacode], tmux, or your terminal’s built-in s
 
 ## Connect it to Claude Code
 
-`sidecar init` creates a starter `.sidecar/sidecar.md`. Inside a git repository, it offers to keep the file out of version control — through `.git/info/exclude` (uncommitted; the rule applies in every worktree) or `.gitignore` (committed) — because a personal scratchpad usually shouldn’t be tracked. Run `sidecar init --yes` to accept the defaults without prompting — handy for scripts and first-time setup. If a root-level `SIDECAR.md` from an older Sidecar exists, `init` offers to move it into `.sidecar/sidecar.md` for you.
+`sidecar init` creates a starter `.sidecar/sidecar.md`. Inside a git repository, its home is excluded automatically — appended to `.git/info/exclude`, uncommitted, applying in every worktree — because a personal scratchpad usually shouldn’t be tracked. No prompt: the default location is decided, so there’s nothing to ask. Pass a custom path (`sidecar init notes.md`) instead, and `init` prompts for where to keep it out of git — `.git/info/exclude` or the committed `.gitignore`. Run `sidecar init --yes` to accept the defaults without prompting — handy for scripts and first-time setup. If a root-level `SIDECAR.md` from an older Sidecar exists, `init` offers to move it into `.sidecar/sidecar.md` for you.
 
 It then offers to add a note to `CLAUDE.md`, and optionally a per-turn `UserPromptSubmit` reconcile hook, so your Claude Code sessions keep the queue up to date and know how to install and launch Sidecar. The hook merges into an existing `.claude/settings.json`, so running `sidecar init` again upgrades an earlier setup in place.
 

@@ -52,7 +52,7 @@ func parseBoard(raw string) (Board, bool) {
 			item = nil
 		case cur == nil:
 			// Preamble before the first heading — title, comments. Skip.
-		case strings.HasPrefix(strings.TrimLeft(ln, " \t"), "- ") && !strings.HasPrefix(ln, " "):
+		case strings.HasPrefix(strings.TrimLeft(ln, " \t"), "- ") && !strings.HasPrefix(ln, " ") && !strings.HasPrefix(ln, "\t"):
 			cur.Items = append(cur.Items, BoardItem{Key: normalizeItem(ln), Raw: ln})
 			item = &cur.Items[len(cur.Items)-1]
 		case trimmed == "":

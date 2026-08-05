@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"golang.org/x/term"
 )
@@ -38,22 +39,30 @@ func runInit(args []string) int {
 		return 1
 	}
 
+	migrated := false
 	if isDefaultTarget {
-		wd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "sidecar init:", err)
-			return 1
-		}
-		root := wd
-		if r, ok := git(wd, "rev-parse", "--show-toplevel"); ok {
-			root = r
-		}
-		migrateLegacyBoard(root, assumeYes)
+		// Migrate against the directory the target itself resolves in — the
+		// target's parent's parent (.sidecar/sidecar.md → cwd) — not the git
+		// root. They coincide in the normal case; from a subdirectory of a
+		// repo, a root-level SIDECAR.md is left alone rather than migrated
+		// out from under the directory the user actually asked to init.
+		root := filepath.Dir(filepath.Dir(abs))
+		migrated = migrateLegacyBoard(root, assumeYes)
 	}
 
 	sections := defaultSections()
 	if _, err := os.Stat(abs); err == nil {
-		fmt.Printf("%s already exists — leaving it untouched.\n", target)
+		if !migrated {
+			fmt.Printf("%s already exists — leaving it untouched.\n", target)
+		}
+		// Re-runs (migration or otherwise) must reflect the board's actual
+		// sections, not silently fall back to the default five and clobber
+		// a correct note/hook on rewrite-in-place.
+		if raw, rerr := os.ReadFile(abs); rerr == nil {
+			if parsed, ok := sectionsFromBoard(string(raw)); ok {
+				sections = parsed
+			}
+		}
 	} else {
 		if !assumeYes && interactiveTTY() {
 			picked, interrupted := pickSections(defaultSections())
@@ -98,8 +107,44 @@ func runInit(args []string) int {
 		offerClaudeHook(abs, sections)
 	}
 
-	fmt.Printf("\nWatch it:  sidecar %s\n", filepath.Base(abs))
+	if isDefaultTarget {
+		fmt.Println("\nWatch it:  sidecar")
+	} else {
+		fmt.Printf("\nWatch it:  sidecar %s\n", target)
+	}
 	return 0
+}
+
+// sectionsFromBoard derives Section values from an existing board's own "## "
+// headings, so rewriting the CLAUDE.md note or hook fallback in place
+// reflects the board's actual sections instead of assuming the default five.
+// ok is false when the board doesn't parse (no headings) — callers then fall
+// back to defaultSections().
+func sectionsFromBoard(raw string) ([]Section, bool) {
+	b, ok := parseBoard(raw)
+	if !ok {
+		return nil, false
+	}
+	sections := make([]Section, len(b.Sections))
+	for i, s := range b.Sections {
+		sections[i] = sectionFromLabel(s.Label)
+	}
+	return sections, true
+}
+
+// sectionFromLabel splits a heading label ("🔥 Hot", "Todo") into a Section:
+// the first field becomes Emoji when it looks like an emoji, the rest (or
+// the whole label, when it doesn't) becomes Name. No Hint — that's not
+// recoverable from the rendered heading.
+func sectionFromLabel(label string) Section {
+	fields := strings.Fields(label)
+	if len(fields) > 1 {
+		r := []rune(fields[0])[0]
+		if unicode.IsSymbol(r) || r > 0x2600 {
+			return Section{Emoji: fields[0], Name: strings.Join(fields[1:], " ")}
+		}
+	}
+	return Section{Name: label}
 }
 
 // migrateLegacyBoard moves a root-level SIDECAR.md into .sidecar/sidecar.md
@@ -114,9 +159,14 @@ func migrateLegacyBoard(root string, assumeYes bool) bool {
 	if _, err := os.Stat(target); err == nil {
 		return false // new home already populated — leave both alone
 	}
+	targetRel := filepath.Join(sidecarDirName, "sidecar.md")
+	if rel, err := filepath.Rel(root, target); err == nil {
+		targetRel = rel
+	}
 	if !assumeYes {
 		fmt.Printf("Move %s into %s/? [Y/n]: ", defaultFile, sidecarDirName)
 		if c := readChoice(); c == "n" || c == "no" {
+			fmt.Printf("Left %s in place — %s will take precedence once you create it.\n", defaultFile, targetRel)
 			return false
 		}
 	}
@@ -130,9 +180,9 @@ func migrateLegacyBoard(root string, assumeYes bool) bool {
 	}
 	if _, tracked := git(root, "ls-files", "--error-unmatch", defaultFile); tracked {
 		git(root, "rm", "--cached", "--quiet", defaultFile)
-		fmt.Printf("Moved %s to %s and untracked it — commit the deletion when ready.\n", defaultFile, target)
+		fmt.Printf("Moved %s to %s and untracked it — commit the deletion when ready.\n", defaultFile, targetRel)
 	} else {
-		fmt.Printf("Moved %s to %s.\n", defaultFile, target)
+		fmt.Printf("Moved %s to %s.\n", defaultFile, targetRel)
 	}
 	return true
 }
@@ -541,6 +591,7 @@ Choice [E/g/n]: `, rel)
 		fmt.Println("Left tracked.")
 	default: // "e" or Enter → recommended
 		applyExcludeDefault(dir, rel)
+		excludeCustomPathSnapshotDir(dir, rel)
 	}
 }
 
@@ -566,6 +617,7 @@ func gitExcludeDefault(fileAbs string) {
 		return
 	}
 	applyExcludeDefault(dir, rel)
+	excludeCustomPathSnapshotDir(dir, rel)
 }
 
 // applyExcludeDefault appends rel to dir's .git/info/exclude — the shared
@@ -581,6 +633,17 @@ func applyExcludeDefault(dir, rel string) {
 		path = filepath.Join(dir, path)
 	}
 	writeIgnore(path, rel)
+}
+
+// excludeCustomPathSnapshotDir excludes the .sidecar/ directory that will
+// appear beside a custom board path once `sidecar diff` writes its snapshot
+// there (previous-<hash>.md) — otherwise it shows up in git status even
+// though the board file itself is ignored. rel is the board's path relative
+// to the repo root that dir's exclude file governs; idempotent via
+// appendLine.
+func excludeCustomPathSnapshotDir(dir, rel string) {
+	sidecarRel := filepath.Join(filepath.Dir(rel), sidecarDirName) + "/"
+	applyExcludeDefault(dir, sidecarRel)
 }
 
 func writeIgnore(path, line string) {
