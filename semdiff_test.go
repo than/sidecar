@@ -90,3 +90,49 @@ func TestSemanticDiffLongTitleTruncated(t *testing.T) {
 		t.Errorf("title not truncated to 59+…:\n%s", out)
 	}
 }
+
+func TestUnifiedU0(t *testing.T) {
+	out := unifiedU0("a\nb\nc\n", "a\nX\nc\n")
+	want := []string{"@@ -2 +2 @@", "-b", "+X"}
+	if len(out) != len(want) {
+		t.Fatalf("out = %q, want %q", out, want)
+	}
+	for i := range want {
+		if out[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, out[i], want[i])
+		}
+	}
+}
+
+func TestUnifiedU0Insert(t *testing.T) {
+	out := strings.Join(unifiedU0("a\nc\n", "a\nb\nc\n"), "\n")
+	if !strings.Contains(out, "+b") {
+		t.Errorf("missing +b:\n%s", out)
+	}
+}
+
+func TestDiffLinesSemanticWhenParsable(t *testing.T) {
+	oldRaw := "## 🧠 Needs action\n\n- Old idea\n"
+	newRaw := "## 🧠 Needs action\n\n- New idea\n"
+	out := strings.Join(diffLines(oldRaw, newRaw), "\n")
+	if !strings.Contains(out, "added 🧠:") || strings.Contains(out, "@@") {
+		t.Errorf("expected semantic output:\n%s", out)
+	}
+}
+
+func TestDiffLinesFallbackWhenUnparsable(t *testing.T) {
+	out := strings.Join(diffLines("plain old\n", "plain new\n"), "\n")
+	if !strings.Contains(out, "-plain old") || !strings.Contains(out, "+plain new") {
+		t.Errorf("expected textual fallback:\n%s", out)
+	}
+}
+
+func TestDiffLinesFallbackWhenNoItemChanges(t *testing.T) {
+	// Both parse, but only the title changed — no item events, so fall back.
+	oldRaw := "# One\n\n## 🧠 Needs action\n\n- Same\n"
+	newRaw := "# Two\n\n## 🧠 Needs action\n\n- Same\n"
+	out := strings.Join(diffLines(oldRaw, newRaw), "\n")
+	if !strings.Contains(out, "-# One") {
+		t.Errorf("expected textual fallback for non-item change:\n%s", out)
+	}
+}
