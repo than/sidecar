@@ -382,3 +382,24 @@ func TestRunInitYesNonInteractive(t *testing.T) {
 		t.Error("hook not written")
 	}
 }
+
+// A custom target path with --yes must not block on the git-exclude prompt —
+// the flag, not TTY state, decides. It should take the same outcome as
+// pressing Enter at the prompt: append the path to .git/info/exclude.
+func TestRunInitYesCustomPathSkipsExcludePrompt(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	target := filepath.Join(dir, "notes.md")
+	withWorkDir(t, dir, func() {
+		if code := runInit([]string{target, "--yes"}); code != 0 {
+			t.Fatalf("exit = %d", code)
+		}
+	})
+	if _, err := os.Stat(target); err != nil {
+		t.Fatal("board not created")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if err != nil || !strings.Contains(string(data), "notes.md") {
+		t.Errorf("notes.md not in .git/info/exclude: %q, %v", data, err)
+	}
+}

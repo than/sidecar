@@ -77,6 +77,8 @@ func runInit(args []string) int {
 			root = r
 		}
 		excludeSidecarDir(root)
+	} else if assumeYes {
+		gitExcludeDefault(abs)
 	} else {
 		offerGitExclude(abs)
 	}
@@ -538,16 +540,47 @@ Choice [E/g/n]: `, rel)
 	case "n":
 		fmt.Println("Left tracked.")
 	default: // "e" or Enter → recommended
-		path, ok := git(dir, "rev-parse", "--git-path", "info/exclude")
-		if !ok {
-			fmt.Fprintln(os.Stderr, "could not locate .git/info/exclude")
-			return
-		}
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(dir, path)
-		}
-		writeIgnore(path, rel)
+		applyExcludeDefault(dir, rel)
 	}
+}
+
+// gitExcludeDefault takes offerGitExclude's recommended default — appending
+// the file to .git/info/exclude — without printing a prompt or reading
+// stdin. Used by `sidecar init --yes`, which decides by flag rather than
+// TTY state. No-op outside a work tree or when the file is already ignored.
+func gitExcludeDefault(fileAbs string) {
+	dir := filepath.Dir(fileAbs)
+	if out, ok := git(dir, "rev-parse", "--is-inside-work-tree"); !ok || out != "true" {
+		return // not a git work tree — nothing to exclude
+	}
+	root, ok := git(dir, "rev-parse", "--show-toplevel")
+	if !ok {
+		return
+	}
+	rel, err := filepath.Rel(root, fileAbs)
+	if err != nil {
+		return
+	}
+	if _, ignored := git(dir, "check-ignore", "-q", fileAbs); ignored {
+		fmt.Printf("%s is already git-ignored.\n", rel)
+		return
+	}
+	applyExcludeDefault(dir, rel)
+}
+
+// applyExcludeDefault appends rel to dir's .git/info/exclude — the shared
+// action behind both the interactive "recommended" choice and the
+// non-interactive --yes default.
+func applyExcludeDefault(dir, rel string) {
+	path, ok := git(dir, "rev-parse", "--git-path", "info/exclude")
+	if !ok {
+		fmt.Fprintln(os.Stderr, "could not locate .git/info/exclude")
+		return
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
+	}
+	writeIgnore(path, rel)
 }
 
 func writeIgnore(path, line string) {
