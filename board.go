@@ -41,8 +41,13 @@ func parseBoard(raw string) (Board, bool) {
 			}
 			continue
 		}
-		if strings.HasPrefix(trimmed, "<!--") && !strings.Contains(trimmed, "-->") {
-			inComment = true
+		if strings.HasPrefix(trimmed, "<!--") {
+			// A complete single-line comment ("<!-- x -->") needs no state —
+			// skip it outright, same as the multi-line open below, so editing
+			// its text doesn't attach to the preceding item's Raw.
+			if !strings.Contains(trimmed, "-->") {
+				inComment = true
+			}
 			continue
 		}
 		switch {
@@ -52,7 +57,7 @@ func parseBoard(raw string) (Board, bool) {
 			item = nil
 		case cur == nil:
 			// Preamble before the first heading — title, comments. Skip.
-		case strings.HasPrefix(strings.TrimLeft(ln, " \t"), "- ") && !strings.HasPrefix(ln, " ") && !strings.HasPrefix(ln, "\t"):
+		case strings.HasPrefix(ln, "- "):
 			cur.Items = append(cur.Items, BoardItem{Key: normalizeItem(ln), Raw: ln})
 			item = &cur.Items[len(cur.Items)-1]
 		case trimmed == "":

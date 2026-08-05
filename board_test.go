@@ -73,6 +73,23 @@ func TestParseBoardNoHeadings(t *testing.T) {
 	}
 }
 
+// R7: a complete single-line HTML comment must be skipped like a multi-line
+// one — editing it shouldn't attach its text to the preceding item's Raw and
+// report a spurious "edited" on that item.
+func TestParseBoardSingleLineCommentSkipped(t *testing.T) {
+	raw := "## 🧠 Needs action\n\n- Review PR #7\n<!-- a note -->\n- Ship v2\n"
+	b, ok := parseBoard(raw)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if len(b.Sections[0].Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(b.Sections[0].Items))
+	}
+	if b.Sections[0].Items[0].Raw != "- Review PR #7" {
+		t.Errorf("comment line leaked into preceding item's Raw: %q", b.Sections[0].Items[0].Raw)
+	}
+}
+
 func TestNormalizeItem(t *testing.T) {
 	if got := normalizeItem("-   Fix   the  parser  "); got != "Fix the parser" {
 		t.Errorf("got %q", got)
