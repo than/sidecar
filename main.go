@@ -17,9 +17,9 @@ var version = "dev"
 
 const help = `sidecar — live-updating markdown viewer for a terminal side pane
 
-usage: sidecar [file.md]         (default: ./SIDECAR.md)
-       sidecar init [file.md]    scaffold the file; offer to git-exclude it
-                                 and wire it into Claude Code
+usage: sidecar [file.md]         (default: .sidecar/sidecar.md)
+       sidecar init [file.md]    create the board and wire it into Claude Code
+       sidecar diff [file.md]    print board changes since the last run
        sidecar --static [file]   render once to stdout and exit (no TUI)
        sidecar --no-flash [file] disable the subtle change-flash (▸ still shows)
 
@@ -46,11 +46,13 @@ func main() {
 			os.Exit(runStatic(os.Args[2:]))
 		case "init":
 			os.Exit(runInit(os.Args[2:]))
+		case "diff":
+			os.Exit(runDiff(os.Args[2:]))
 		}
 	}
 
 	// Viewer mode: an optional file path plus the --no-flash flag, any order.
-	path := defaultFile
+	path := defaultBoardPath()
 	noFlash := false
 	for _, a := range os.Args[1:] {
 		switch {
@@ -90,7 +92,7 @@ func main() {
 // alt-screen. Handy for piping, CI, and quick inline checks. Width is the
 // terminal width (minus 2) when stdout is a TTY, else 80.
 func runStatic(args []string) int {
-	path := defaultFile
+	path := defaultBoardPath()
 	if len(args) > 0 {
 		path = args[0]
 	}

@@ -151,6 +151,12 @@ func writeClaudeNote(root, rel string, sections []Section) {
 // older SessionStart one — instead of stacking duplicates.
 const hookSentinel = "the sidecar review queue"
 
+// reconcileMessageLabels renders the per-turn reminder from plain heading
+// labels. reconcileMessage adapts []Section to it.
+func reconcileMessageLabels(rel string, labels []string) string {
+	return fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `sidecar %s`. Sections: %s.", rel, hookSentinel, rel, strings.Join(labels, " / "))
+}
+
 // reconcileMessage is the per-turn reminder the hook echoes. It's conditional
 // ("if your last turn changed task state") so it costs almost nothing on
 // turns that don't touch the queue.
@@ -159,7 +165,7 @@ func reconcileMessage(rel string, sections []Section) string {
 	for i, s := range sections {
 		labels[i] = s.label()
 	}
-	return fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `sidecar %s`. Sections: %s.", rel, hookSentinel, rel, strings.Join(labels, " / "))
+	return reconcileMessageLabels(rel, labels)
 }
 
 // reconcileHookEntry is a single Claude Code hook entry (one matcher, one
