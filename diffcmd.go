@@ -70,11 +70,18 @@ func snapshotPath(boardAbs string) string {
 	return filepath.Join(dir, sidecarDirName, fmt.Sprintf("previous-%08x.md", h.Sum32()))
 }
 
+// writeSnapshot advances the snapshot, keeping exit 0 even when it fails (a
+// hook must never fail the turn) but printing the error rather than
+// swallowing it — otherwise a read-only checkout reprints the same diff
+// forever with no explanation of why it never goes silent.
 func writeSnapshot(path string, data []byte) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "sidecar diff:", err)
 		return
 	}
-	_ = os.WriteFile(path, data, 0o644)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "sidecar diff:", err)
+	}
 }
 
 // closingReminder is the last line of a non-empty diff: the reconcile
