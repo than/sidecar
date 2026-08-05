@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -169,6 +170,62 @@ func TestUnifiedU0TrailingNewlineOnly(t *testing.T) {
 	out := unifiedU0("a\nb", "a\nb\n")
 	if len(out) == 0 {
 		t.Fatal("expected non-empty diff for trailing-newline-only change, got none")
+	}
+}
+
+// R2: a change buried in the middle of a larger file must trim the common
+// prefix/suffix and still report correct absolute line numbers.
+func TestUnifiedU0PrefixSuffixTrimAbsoluteLineNumbers(t *testing.T) {
+	lines := make([]string, 10)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line%d", i+1)
+	}
+	oldRaw := strings.Join(lines, "\n") + "\n"
+	changed := make([]string, len(lines))
+	copy(changed, lines)
+	changed[5] = "CHANGED" // line 6, 1-based
+	newRaw := strings.Join(changed, "\n") + "\n"
+
+	out := unifiedU0(oldRaw, newRaw)
+	want := []string{"@@ -6 +6 @@", "-line6", "+CHANGED"}
+	if len(out) != len(want) {
+		t.Fatalf("out = %q, want %q", out, want)
+	}
+	for i := range want {
+		if out[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, out[i], want[i])
+		}
+	}
+}
+
+// R2: a differing middle beyond the DP cell cap must fall back to a single
+// "too large to diff" line rather than allocate a huge table.
+func TestUnifiedU0OverflowFallsBackToSingleLine(t *testing.T) {
+	const n = 1100 // 1100*1100 > 1<<20 (1,048,576)
+	oldLines := make([]string, n)
+	newLines := make([]string, n)
+	for i := 0; i < n; i++ {
+		oldLines[i] = fmt.Sprintf("old-distinct-%d", i)
+		newLines[i] = fmt.Sprintf("new-distinct-%d", i)
+	}
+	oldRaw := "prefix\n" + strings.Join(oldLines, "\n") + "\nsuffix\n"
+	newRaw := "prefix\n" + strings.Join(newLines, "\n") + "\nsuffix\n"
+
+	out := unifiedU0(oldRaw, newRaw)
+	want := []string{"file changed — too large to diff"}
+	if len(out) != 1 || out[0] != want[0] {
+		t.Fatalf("out = %q, want %q", out, want)
+	}
+}
+
+// R6: hunk headers carry the nearest preceding markdown heading, like
+// `diff -F '^#'`.
+func TestUnifiedU0HeadingContext(t *testing.T) {
+	oldRaw := "## 🧠 Needs action\n\n- Old idea\n\n## 🚧 In progress\n\n- Ship v2\n"
+	newRaw := "## 🧠 Needs action\n\n- Old idea\n\n## 🚧 In progress\n\n- Ship v3\n"
+	out := unifiedU0(oldRaw, newRaw)
+	if len(out) == 0 || !strings.Contains(out[0], "## 🚧 In progress") {
+		t.Fatalf("out = %q, want header to carry '## 🚧 In progress'", out)
 	}
 }
 

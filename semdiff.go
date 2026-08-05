@@ -160,14 +160,39 @@ func unifiedU0(oldRaw, newRaw string) []string {
 	o := splitLines(oldRaw)
 	n := splitLines(newRaw)
 
-	// LCS table, same shape as changedLines in diff.go.
-	lcs := make([][]int32, len(o)+1)
-	for i := range lcs {
-		lcs[i] = make([]int32, len(n)+1)
+	// Trim the common prefix and suffix — same rationale as changedLines in
+	// diff.go: unchanged lines need no diffing and keep the DP table
+	// proportional to the edited region, not the whole file. start is the
+	// offset added back into every line number below so headers stay
+	// absolute.
+	start := 0
+	for start < len(o) && start < len(n) && o[start] == n[start] {
+		start++
 	}
-	for i := len(o) - 1; i >= 0; i-- {
-		for j := len(n) - 1; j >= 0; j-- {
-			if o[i] == n[j] {
+	endO, endN := len(o), len(n)
+	for endO > start && endN > start && o[endO-1] == n[endN-1] {
+		endO--
+		endN--
+	}
+	om, nm := o[start:endO], n[start:endN]
+
+	// Guard against a pathological table on very large files: past this many
+	// cells, skip the diff entirely rather than allocate hundreds of MB.
+	// diffLines only calls unifiedU0 when the bytes differ, so this must
+	// still surface something — a single explanatory line.
+	const maxDiffCells = 1 << 20 // ~4 MB with int32 cells; ~1000 lines a side
+	if len(om)*len(nm) > maxDiffCells {
+		return []string{"file changed — too large to diff"}
+	}
+
+	// LCS table, same shape as changedLines in diff.go, over the trimmed middle.
+	lcs := make([][]int32, len(om)+1)
+	for i := range lcs {
+		lcs[i] = make([]int32, len(nm)+1)
+	}
+	for i := len(om) - 1; i >= 0; i-- {
+		for j := len(nm) - 1; j >= 0; j-- {
+			if om[i] == nm[j] {
 				lcs[i][j] = lcs[i+1][j+1] + 1
 			} else if lcs[i+1][j] >= lcs[i][j+1] {
 				lcs[i][j] = lcs[i+1][j]
@@ -185,16 +210,16 @@ func unifiedU0(oldRaw, newRaw string) []string {
 	}
 	var ops []op
 	i, j := 0, 0
-	for i < len(o) || j < len(n) {
+	for i < len(om) || j < len(nm) {
 		switch {
-		case i < len(o) && j < len(n) && o[i] == n[j]:
+		case i < len(om) && j < len(nm) && om[i] == nm[j]:
 			i++
 			j++
-		case j < len(n) && (i == len(o) || lcs[i][j+1] >= lcs[i+1][j]):
-			ops = append(ops, op{'+', n[j], i, j + 1})
+		case j < len(nm) && (i == len(om) || lcs[i][j+1] >= lcs[i+1][j]):
+			ops = append(ops, op{'+', nm[j], start + i, start + j + 1})
 			j++
 		default:
-			ops = append(ops, op{'-', o[i], i + 1, j})
+			ops = append(ops, op{'-', om[i], start + i + 1, start + j})
 			i++
 		}
 	}
@@ -235,8 +260,16 @@ func unifiedU0(oldRaw, newRaw string) []string {
 		// same way, and a replace hunk's "-" side must report the deleted
 		// line's actual old position, not wherever the tie-broken insert/
 		// delete ops happened to land first in generation order.
-		if !haveO {
+		// anchorIdx is the 0-based count of old lines strictly before the
+		// hunk, captured before the zero→1 display adjustment below so the
+		// heading lookup (R6) sees the true position rather than the
+		// display-only "line 1" fallback.
+		var anchorIdx int
+		if haveO {
+			anchorIdx = firstO - 1
+		} else {
 			firstO = hunk[0].oi
+			anchorIdx = firstO
 			// A zero anchor means "before line 1" only when the old side is
 			// genuinely empty. A non-empty old file whose insert lands at
 			// the very start still anchors at line 1, matching GNU diff
@@ -251,7 +284,11 @@ func unifiedU0(oldRaw, newRaw string) []string {
 				firstN = 1
 			}
 		}
-		out = append(out, hunkHeader(firstO, len(dels), firstN, len(adds)))
+		header := hunkHeader(firstO, len(dels), firstN, len(adds))
+		if heading := headingBefore(o, anchorIdx); heading != "" {
+			header += " " + heading
+		}
+		out = append(out, header)
 		out = append(out, dels...)
 		out = append(out, adds...)
 	}
@@ -276,6 +313,22 @@ func unifiedU0(oldRaw, newRaw string) []string {
 		out = append(out, hunkHeader(pos, 1, pos, 1), "-"+last, "+"+last)
 	}
 	return out
+}
+
+// headingBefore returns the last line in o[:limit] that starts with "#" — the
+// nearest markdown heading preceding a hunk's position in the old file, like
+// `diff -F '^#'`. Empty when no such line exists.
+func headingBefore(o []string, limit int) string {
+	if limit > len(o) {
+		limit = len(o)
+	}
+	last := ""
+	for idx := 0; idx < limit; idx++ {
+		if strings.HasPrefix(o[idx], "#") {
+			last = o[idx]
+		}
+	}
+	return last
 }
 
 // splitLines splits raw text into lines without a trailing empty element for
