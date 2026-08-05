@@ -1,13 +1,13 @@
 # Diff as protocol
 
 Status: approved design, pending spec review
-Issue: https://github.com/than/sidecar/issues/9
+Issue: <https://github.com/than/sidecar/issues/9>
 Date: 2026-08-04
 
 ## Problem
 
 Each time the human sends a message, the reconcile hook repeats the same
-static reminder. The agent learns that the board *may* have changed, so it
+static reminder. The agent learns that the board _may_ have changed, so it
 re-reads the whole file — every turn, whether anything moved or not. And
 changes the human makes by hand never reach the agent at all.
 
@@ -24,8 +24,8 @@ state.
 
 ```
 .sidecar/
-  sidecar.md   the board — replaces root-level SIDECAR.md
-  prev.md      the board as of the last turn (the diff baseline)
+  sidecar.md    the board — replaces root-level SIDECAR.md
+  previous.md   the board as of the last turn (the diff baseline)
 ```
 
 - Bare `sidecar` opens `.sidecar/sidecar.md` when it exists.
@@ -38,13 +38,13 @@ state.
 
 ## New subcommand: `sidecar diff`
 
-Compare `.sidecar/sidecar.md` with `.sidecar/prev.md`, print what changed,
-then overwrite `prev.md` with the current board.
+Compare `.sidecar/sidecar.md` with `.sidecar/previous.md`, print what
+changed, then overwrite `previous.md` with the current board.
 
 Behavior:
 
 - **No changes** — print nothing, exit 0. The hook stays silent.
-- **First run** (no `prev.md`) — save the snapshot silently.
+- **First run** (no `previous.md`) — save the snapshot silently.
 - **No board** — print nothing, exit 0. Never an error in a hook context.
 - **Changes** — print one line per changed item, then one closing line:
   the existing reconcile reminder, so the agent knows what file this is
