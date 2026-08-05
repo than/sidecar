@@ -63,6 +63,24 @@ func TestSemanticDiffUnchanged(t *testing.T) {
 	}
 }
 
+// R1: pass 1 must not match duplicate keys ("- nothing yet") across sections.
+// Replacing only 🧠's placeholder with a real item must not fabricate a moved
+// line by matching a same-key placeholder still sitting in 🚧 or ✅.
+func TestSemanticDiffDuplicateKeyStaysInSection(t *testing.T) {
+	old := board(t, "## 🧠 Needs action\n\n- nothing yet\n\n## 🚧 In progress\n\n- nothing yet\n\n## ✅ Done\n\n- nothing yet\n")
+	new := board(t, "## 🧠 Needs action\n\n- Fix the parser\n\n## 🚧 In progress\n\n- nothing yet\n\n## ✅ Done\n\n- nothing yet\n")
+	out := semanticDiff(old, new)
+	want := []string{`added 🧠: "Fix the parser"`, `removed 🧠: "nothing yet"`}
+	if len(out) != len(want) {
+		t.Fatalf("out = %q, want %q", out, want)
+	}
+	for i := range want {
+		if out[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, out[i], want[i])
+		}
+	}
+}
+
 func TestSemanticDiffTextOnlySectionTag(t *testing.T) {
 	old := board(t, "## Todo\n\n- nothing yet\n")
 	new := board(t, "## Todo\n\n- A task\n")

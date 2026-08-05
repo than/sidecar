@@ -28,20 +28,37 @@ func semanticDiff(old, new Board) []string {
 
 	var moved, edited, added, removed []string
 
-	// Pass 1: exact key matches.
+	// Pass 1: exact key matches — same-section candidates first, so a key
+	// duplicated across sections (e.g. a shared placeholder like "nothing
+	// yet") never fabricates a moved line when an unmatched same-section
+	// candidate is sitting right there. Cross-section is the fallback, used
+	// only when no same-section candidate remains.
 	for _, n := range news {
+		var match *itemRef
 		for _, o := range byKey[n.item.Key] {
-			if o.matched {
-				continue
+			if !o.matched && o.section == n.section {
+				match = o
+				break
 			}
-			o.matched, n.matched = true, true
-			switch {
-			case o.section != n.section:
-				moved = append(moved, fmt.Sprintf("moved %s→%s: %q", sectionTag(o.section), sectionTag(n.section), title(n.item.Key)))
-			case o.item.Raw != n.item.Raw:
-				edited = append(edited, fmt.Sprintf("edited %s: %q", sectionTag(n.section), title(n.item.Key)))
+		}
+		if match == nil {
+			for _, o := range byKey[n.item.Key] {
+				if !o.matched {
+					match = o
+					break
+				}
 			}
-			break
+		}
+		if match == nil {
+			continue
+		}
+		o := match
+		o.matched, n.matched = true, true
+		switch {
+		case o.section != n.section:
+			moved = append(moved, fmt.Sprintf("moved %s→%s: %q", sectionTag(o.section), sectionTag(n.section), title(n.item.Key)))
+		case o.item.Raw != n.item.Raw:
+			edited = append(edited, fmt.Sprintf("edited %s: %q", sectionTag(n.section), title(n.item.Key)))
 		}
 	}
 
