@@ -316,3 +316,69 @@ func TestClaudeNoteWritingRules(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrateLegacyBoard(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- carry me over\n"), 0o644)
+	mustRun(t, dir, "git", "add", "SIDECAR.md")
+
+	if !migrateLegacyBoard(dir, true) {
+		t.Fatal("expected migration")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, sidecarDirName, "sidecar.md"))
+	if err != nil || !strings.Contains(string(data), "carry me over") {
+		t.Fatalf("board content lost: %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "SIDECAR.md")); !os.IsNotExist(err) {
+		t.Error("legacy file still present")
+	}
+	// No longer tracked.
+	cmd := exec.Command("git", "ls-files", "--error-unmatch", "SIDECAR.md")
+	cmd.Dir = dir
+	if cmd.Run() == nil {
+		t.Error("SIDECAR.md still tracked after migration")
+	}
+}
+
+func TestMigrateLegacyBoardUntracked(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- local only\n"), 0o644)
+	if !migrateLegacyBoard(dir, true) {
+		t.Fatal("expected migration of an untracked board")
+	}
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err != nil {
+		t.Error("board not moved")
+	}
+}
+
+func TestMigrateLegacyBoardNothingToDo(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	if migrateLegacyBoard(dir, true) {
+		t.Error("migrated with no legacy file present")
+	}
+}
+
+func TestRunInitYesNonInteractive(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	withWorkDir(t, dir, func() {
+		if code := runInit([]string{"--yes"}); code != 0 {
+			t.Fatalf("exit = %d", code)
+		}
+	})
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err != nil {
+		t.Error("board not created")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude")); !strings.Contains(string(data), ".sidecar/") {
+		t.Error(".sidecar/ not excluded")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md")); !strings.Contains(string(data), "sidecar:review-queue") {
+		t.Error("CLAUDE.md note not written")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, ".claude", "settings.json")); !strings.Contains(string(data), "sidecar diff") {
+		t.Error("hook not written")
+	}
+}

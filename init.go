@@ -15,6 +15,19 @@ import (
 // runInit scaffolds the target file and offers to keep it out of git.
 // Returns a process exit code.
 func runInit(args []string) int {
+	assumeYes := false
+	var rest []string
+	for _, a := range args {
+		switch a {
+		case "--yes", "-y":
+			assumeYes = true
+		default:
+			rest = append(rest, a)
+		}
+	}
+	args = rest
+
+	isDefaultTarget := len(args) == 0
 	target := filepath.Join(sidecarDirName, "sidecar.md")
 	if len(args) > 0 {
 		target = args[0]
@@ -25,11 +38,24 @@ func runInit(args []string) int {
 		return 1
 	}
 
+	if isDefaultTarget {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "sidecar init:", err)
+			return 1
+		}
+		root := wd
+		if r, ok := git(wd, "rev-parse", "--show-toplevel"); ok {
+			root = r
+		}
+		migrateLegacyBoard(root, assumeYes)
+	}
+
 	sections := defaultSections()
 	if _, err := os.Stat(abs); err == nil {
 		fmt.Printf("%s already exists — leaving it untouched.\n", target)
 	} else {
-		if interactiveTTY() {
+		if !assumeYes && interactiveTTY() {
 			picked, interrupted := pickSections(defaultSections())
 			if interrupted {
 				fmt.Fprintln(os.Stderr, "sidecar init: canceled — nothing written.")
@@ -54,10 +80,59 @@ func runInit(args []string) int {
 	} else {
 		offerGitExclude(abs)
 	}
-	offerClaudeHook(abs, sections)
+	if assumeYes {
+		dir := filepath.Dir(abs)
+		root := dir
+		if r, ok := git(dir, "rev-parse", "--show-toplevel"); ok {
+			root = r
+		}
+		rel, err := filepath.Rel(root, abs)
+		if err != nil {
+			rel = filepath.Base(abs)
+		}
+		writeClaudeNote(root, rel, sections)
+		writeReconcileHook(root, rel, sections)
+	} else {
+		offerClaudeHook(abs, sections)
+	}
 
 	fmt.Printf("\nWatch it:  sidecar %s\n", filepath.Base(abs))
 	return 0
+}
+
+// migrateLegacyBoard moves a root-level SIDECAR.md into .sidecar/sidecar.md
+// and untracks it when git knows it. assumeYes skips the prompt. Returns
+// true when a move happened.
+func migrateLegacyBoard(root string, assumeYes bool) bool {
+	legacy := filepath.Join(root, defaultFile)
+	target := filepath.Join(root, sidecarDirName, "sidecar.md")
+	if _, err := os.Stat(legacy); err != nil {
+		return false
+	}
+	if _, err := os.Stat(target); err == nil {
+		return false // new home already populated — leave both alone
+	}
+	if !assumeYes {
+		fmt.Printf("Move %s into %s/? [Y/n]: ", defaultFile, sidecarDirName)
+		if c := readChoice(); c == "n" || c == "no" {
+			return false
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "sidecar init:", err)
+		return false
+	}
+	if err := os.Rename(legacy, target); err != nil {
+		fmt.Fprintln(os.Stderr, "sidecar init:", err)
+		return false
+	}
+	if _, tracked := git(root, "ls-files", "--error-unmatch", defaultFile); tracked {
+		git(root, "rm", "--cached", "--quiet", defaultFile)
+		fmt.Printf("Moved %s to %s and untracked it — commit the deletion when ready.\n", defaultFile, target)
+	} else {
+		fmt.Printf("Moved %s to %s.\n", defaultFile, target)
+	}
+	return true
 }
 
 // interactiveTTY reports whether both stdin and stdout are terminals — the

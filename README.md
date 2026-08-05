@@ -1,22 +1,25 @@
 # 🚗 Sidecar
 
-Sidecar is a live, scrollable Markdown viewer for a narrow terminal pane. It’s designed to sit beside a Claude Code session and show the `SIDECAR.md` queue your agent keeps while it works — a to-do list and scratchpad your AI maintains for you.
+Sidecar is a live, scrollable Markdown viewer for a narrow terminal pane. It’s designed to sit beside a Claude Code session and show the `.sidecar/sidecar.md` queue your agent keeps while it works — a to-do list and scratchpad your AI maintains for you.
 
 ```
-sidecar [file.md]        # default: ./SIDECAR.md
-sidecar init [file.md]   # create the file, and optionally keep it out of git
+sidecar [file.md]        # default: .sidecar/sidecar.md
+sidecar init [file.md]   # create the board, and optionally keep it out of git
+sidecar diff [file.md]   # print board changes since the last run
 sidecar --no-flash [file]  disable the subtle change-flash (▸ still shows)
 ```
+
+Sidecar keeps its state in `.sidecar/` — the board (`sidecar.md`) and the last-turn snapshot (`previous.md`) — excluded from git via `.git/info/exclude`.
 
 ## Why two panes
 
 In a long agent session, the status that matters — what’s done, what’s blocked, what shipped — scrolls out of view at the top of the transcript. Sidecar keeps it in place.
 
-Run Sidecar beside your Claude Code session in a split terminal. Claude edits `SIDECAR.md` in one pane, and Sidecar renders it live in the pane next to it. You get a steady, current view of the work while the transcript moves on the other side.
+Run Sidecar beside your Claude Code session in a split terminal. Claude edits `.sidecar/sidecar.md` in one pane, and Sidecar renders it live in the pane next to it. You get a steady, current view of the work while the transcript moves on the other side.
 
-| Claude Code | sidecar `SIDECAR.md` |
+| Claude Code | sidecar `.sidecar/sidecar.md` |
 | --- | --- |
-| edits `SIDECAR.md`,<br>transcript scrolls | 🧠 Needs action<br>🚧 In progress<br>🚘 Parked<br>✅ Done<br>📦 Shipped |
+| edits `.sidecar/sidecar.md`,<br>transcript scrolls | 🧠 Needs action<br>🚧 In progress<br>🚘 Parked<br>✅ Done<br>📦 Shipped |
 
 Any split-pane setup works — [Supacode], tmux, or your terminal’s built-in splits (Ghostty, iTerm2, WezTerm). To keep the queue current, use the `UserPromptSubmit` hook that `sidecar init` offers (option `[b]`). It reminds Claude to update the file each turn, so the view stays fresh. For details, see [Connect it to Claude Code](#connect-it-to-claude-code).
 
@@ -24,7 +27,7 @@ Any split-pane setup works — [Supacode], tmux, or your terminal’s built-in s
 
 ## Connect it to Claude Code
 
-`sidecar init` creates a starter `SIDECAR.md`. Inside a git repository, it offers to keep the file out of version control — through `.git/info/exclude` (uncommitted; the rule applies in every worktree) or `.gitignore` (committed) — because a personal scratchpad usually shouldn’t be tracked.
+`sidecar init` creates a starter `.sidecar/sidecar.md`. Inside a git repository, it offers to keep the file out of version control — through `.git/info/exclude` (uncommitted; the rule applies in every worktree) or `.gitignore` (committed) — because a personal scratchpad usually shouldn’t be tracked. Run `sidecar init --yes` to accept the defaults without prompting — handy for scripts and first-time setup. If a root-level `SIDECAR.md` from an older Sidecar exists, `init` offers to move it into `.sidecar/sidecar.md` for you.
 
 It then offers to add a note to `CLAUDE.md`, and optionally a per-turn `UserPromptSubmit` reconcile hook, so your Claude Code sessions keep the queue up to date and know how to install and launch Sidecar. The hook merges into an existing `.claude/settings.json`, so running `sidecar init` again upgrades an earlier setup in place.
 
