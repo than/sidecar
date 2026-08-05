@@ -102,7 +102,27 @@ reminder line still follows.
    setups already exclude it locally, e.g. via `.git/info/exclude`).
    Re-running init upgrades a prior sidecar hook in place, as it does
    today.
-5. Updates the CLAUDE.md note to point at `.sidecar/sidecar.md`.
+5. Updates the CLAUDE.md note to point at `.sidecar/sidecar.md`, and
+   rewrites its writing guidance (below).
+
+### Entry writing rules (the CLAUDE.md note's new guidance)
+
+Motivation: "keep entries short" is the note's only current rule, and in
+practice agents dump full session recaps into one bullet. Replace it with
+a shape rule and a voice.
+
+Shape — one entry is at most:
+
+1. Status tag + title on the first line.
+2. Two sentences of detail. Anything more belongs in the PR or issue the
+   entry links to.
+3. Bare URLs, each on its own line.
+4. One optional `Next:` line naming the single next action.
+
+Voice — Apple Developer documentation style: declarative or imperative,
+front-loaded verb, present tense, one fact per sentence. State outcomes,
+not process ("Fixes the tax gap. Ready to merge." — never "went through
+13 review rounds fixing…").
 
 The reconcile reminder text (`reconcileMessage`) survives as both the
 hook's no-binary fallback and the closing line of a non-empty diff.
