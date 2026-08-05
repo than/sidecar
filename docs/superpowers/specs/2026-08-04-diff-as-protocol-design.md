@@ -89,8 +89,10 @@ reminder line still follows.
 `sidecar init`:
 
 1. Creates `.sidecar/`, writes the starter board to `.sidecar/sidecar.md`.
-2. Appends `.sidecar/` to `.gitignore`, creating the file if needed.
-   Skips the append when the entry is already present.
+2. Appends `.sidecar/` to `.git/info/exclude` — local and uncommitted, so
+   the repo never learns sidecar exists. Automatic, no prompt; skipped
+   when already ignored. (Replaces today's 3-way exclude prompt: the
+   board's home is decided, so there's nothing left to ask.)
 3. Writes the UserPromptSubmit hook as a guarded one-liner:
    run `sidecar diff` when sidecar is installed, otherwise echo the
    current static reminder. The hook degrades to today's behavior instead
@@ -98,20 +100,37 @@ reminder line still follows.
 4. **Migration** — when a root-level SIDECAR.md exists, offer to move it
    to `.sidecar/sidecar.md`, and `git rm --cached` it when tracked (some
    setups already exclude it locally, e.g. via `.git/info/exclude`).
-   Re-running init
-   upgrades a prior sidecar hook in place, as it does today.
+   Re-running init upgrades a prior sidecar hook in place, as it does
+   today.
 5. Updates the CLAUDE.md note to point at `.sidecar/sidecar.md`.
 
 The reconcile reminder text (`reconcileMessage`) survives as both the
 hook's no-binary fallback and the closing line of a non-empty diff.
+
+### Install-path fixes that ship with this
+
+- **CLAUDE.md note upgrades in place.** Today `writeClaudeNote` skips
+  when the `sidecar:review-queue` marker is present, so a changed path or
+  section set never propagates. Replace the content between the markers
+  instead. Migration depends on this.
+- **Claude wiring becomes the default.** The hook is now the product, so
+  Enter on the wiring prompt installs note + hook (today it defaults to
+  no, with the hook a separate opt-in). Declining stays available.
+- **`sidecar init --yes`.** Non-interactive full install — board, exclude,
+  note, hook — with no prompts. Today every prompt is TTY-gated, so an
+  agent running init gets a bare file with no wiring at all.
+- **Explicit paths keep working.** Bare `sidecar` and `sidecar init`
+  target `.sidecar/sidecar.md`; `sidecar <file>` and `sidecar init <file>`
+  behave as today, with the diff snapshot keyed by path and no migration.
 
 ## Testing
 
 - Unit tests for the differ: added, removed, moved, edited, multi-line
   items, custom sections, unparseable fallback, first run, no changes,
   missing board.
-- Init tests: `.sidecar/` creation, gitignore append (fresh, existing,
-  already-present), guarded hook JSON, SIDECAR.md migration.
+- Init tests: `.sidecar/` creation, info/exclude append (fresh, existing,
+  already-present), guarded hook JSON, SIDECAR.md migration, CLAUDE.md
+  note replacement between markers, `--yes` non-interactive install.
 - One PTY e2e: bare `sidecar` opens `.sidecar/sidecar.md`.
 
 ## Out of scope
