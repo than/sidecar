@@ -3,10 +3,20 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func mustRun(t *testing.T, dir string, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%s %v: %v\n%s", name, args, err, out)
+	}
+}
 
 // runInit scaffolds the file with the starter template when it's absent, and
 // (outside a git work tree) doesn't touch stdin.
@@ -56,7 +66,7 @@ func TestWriteClaudeNoteAppendsAndDedupes(t *testing.T) {
 	writeClaudeNote(root, "SIDECAR.md", defaultSections())
 	data, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
 	got := string(data)
-	for _, want := range []string{"# Existing", claudeNoteMarker, "sidecar SIDECAR.md", "go install github.com/than/sidecar@latest", "🧠"} {
+	for _, want := range []string{"# Existing", claudeNoteMarker, "Maintain `SIDECAR.md`", "go install github.com/than/sidecar@latest", "🧠"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("CLAUDE.md missing %q:\n%s", want, got)
 		}
@@ -201,7 +211,7 @@ func TestClaudeNoteCustomSections(t *testing.T) {
 		claudeNoteMarker,
 		"- `## 🧠 Needs action` — for the human",
 		"`## Todo`",
-		"sidecar SIDECAR.md",
+		"Maintain `SIDECAR.md`",
 	} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note missing %q:\n%s", want, note)
@@ -236,5 +246,73 @@ func TestReconcileMessageCustomSections(t *testing.T) {
 	}
 	if !strings.Contains(msg, hookSentinel) {
 		t.Errorf("reconcile message missing sentinel:\n%s", msg)
+	}
+}
+
+func TestExcludeSidecarDir(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	excludeSidecarDir(dir)
+	data, err := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if err != nil || !strings.Contains(string(data), ".sidecar/") {
+		t.Fatalf("info/exclude = %q, err %v", data, err)
+	}
+	// Idempotent: a second call adds nothing.
+	excludeSidecarDir(dir)
+	again, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if strings.Count(string(again), ".sidecar/") != 1 {
+		t.Errorf("exclude entry duplicated:\n%s", again)
+	}
+}
+
+func TestReconcileHookEntryGuarded(t *testing.T) {
+	entry := reconcileHookEntry(filepath.Join(sidecarDirName, "sidecar.md"), defaultSections())
+	cmd := entry["hooks"].([]any)[0].(map[string]any)["command"].(string)
+	if !strings.Contains(cmd, "command -v sidecar") || !strings.Contains(cmd, "sidecar diff") {
+		t.Errorf("hook not guarded: %q", cmd)
+	}
+	if !strings.Contains(cmd, hookSentinel) {
+		t.Errorf("hook fallback lost the sentinel: %q", cmd)
+	}
+	if strings.Contains(cmd, "sidecar diff '") {
+		t.Errorf("default board should not pass an explicit path: %q", cmd)
+	}
+}
+
+func TestReconcileHookEntryCustomPathPassed(t *testing.T) {
+	entry := reconcileHookEntry("NOTES.md", defaultSections())
+	cmd := entry["hooks"].([]any)[0].(map[string]any)["command"].(string)
+	if !strings.Contains(cmd, "sidecar diff 'NOTES.md'") {
+		t.Errorf("custom path missing from hook: %q", cmd)
+	}
+}
+
+func TestReplaceClaudeNote(t *testing.T) {
+	old := "# My project\n\n<!-- sidecar:review-queue -->\nold sidecar text\n<!-- /sidecar:review-queue -->\n\n## Other section\n"
+	note := claudeNote(filepath.Join(sidecarDirName, "sidecar.md"), defaultSections())
+	got, replaced := replaceClaudeNote(old, note)
+	if !replaced {
+		t.Fatal("expected replacement")
+	}
+	if strings.Contains(got, "old sidecar text") {
+		t.Error("stale note survived")
+	}
+	if !strings.Contains(got, ".sidecar/sidecar.md") || !strings.Contains(got, "# My project") || !strings.Contains(got, "## Other section") {
+		t.Errorf("replacement damaged surrounding content:\n%s", got)
+	}
+}
+
+func TestReplaceClaudeNoteNoMarker(t *testing.T) {
+	if _, replaced := replaceClaudeNote("# Plain file\n", "note"); replaced {
+		t.Error("replaced without a marker")
+	}
+}
+
+func TestClaudeNoteWritingRules(t *testing.T) {
+	note := claudeNote(filepath.Join(sidecarDirName, "sidecar.md"), defaultSections())
+	for _, want := range []string{"Apple Developer documentation voice", "two sentences of detail", "bare URLs, each on its own line", "`Next:` line"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note missing %q", want)
+		}
 	}
 }

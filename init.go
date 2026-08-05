@@ -15,7 +15,7 @@ import (
 // runInit scaffolds the target file and offers to keep it out of git.
 // Returns a process exit code.
 func runInit(args []string) int {
-	target := defaultFile
+	target := filepath.Join(sidecarDirName, "sidecar.md")
 	if len(args) > 0 {
 		target = args[0]
 	}
@@ -44,7 +44,16 @@ func runInit(args []string) int {
 		fmt.Printf("Created %s\n", target)
 	}
 
-	offerGitExclude(abs)
+	if filepath.Base(filepath.Dir(abs)) == sidecarDirName {
+		dir := filepath.Dir(abs)
+		root := filepath.Dir(dir)
+		if r, ok := git(dir, "rev-parse", "--show-toplevel"); ok {
+			root = r
+		}
+		excludeSidecarDir(root)
+	} else {
+		offerGitExclude(abs)
+	}
 	offerClaudeHook(abs, sections)
 
 	fmt.Printf("\nWatch it:  sidecar %s\n", filepath.Base(abs))
@@ -59,6 +68,7 @@ func interactiveTTY() bool {
 }
 
 const claudeNoteMarker = "sidecar:review-queue"
+const claudeNoteEndMarker = "<!-- /sidecar:review-queue -->"
 
 // claudeNote is the instruction appended to CLAUDE.md so Claude Code
 // sessions in the repo keep the queue updated — and know how to install and
@@ -73,15 +83,37 @@ func claudeNote(rel string, sections []Section) string {
 		secLines.WriteString("\n")
 	}
 	const tmpl = "<!-- sidecar:review-queue -->\n" +
-		"## Review queue (sidecar)\n\n" +
-		"Maintain `%[1]s` as a live review / TODO queue for the human. Sections:\n\n" +
+		"## Sidecar board\n\n" +
+		"Maintain `%[1]s` — the live board the human watches with `sidecar`.\n" +
+		"Move each item to the section that matches its state:\n\n" +
 		"%[2]s" +
-		"\nPut bare URLs on their own line (keeps them clickable); keep entries short.\n\n" +
-		"The human watches it live with `sidecar %[1]s`. If sidecar isn't installed:\n" +
-		"`go install github.com/than/sidecar@latest`, or a prebuilt binary from\n" +
-		"https://github.com/than/sidecar/releases/latest\n" +
+		"\nWrite entries in Apple Developer documentation voice: declarative,\n" +
+		"front-loaded verb, present tense, one fact per sentence. State outcomes,\n" +
+		"not process.\n\n" +
+		"One entry is at most:\n" +
+		"- a status tag and title on the first line\n" +
+		"- two sentences of detail — more belongs in the PR or issue you link\n" +
+		"- bare URLs, each on its own line\n" +
+		"- one `Next:` line naming the single next action (optional)\n\n" +
+		"If sidecar isn't installed: `go install github.com/than/sidecar@latest`,\n" +
+		"or a prebuilt binary from https://github.com/than/sidecar/releases/latest\n" +
 		"<!-- /sidecar:review-queue -->\n"
 	return fmt.Sprintf(tmpl, rel, secLines.String())
+}
+
+// replaceClaudeNote swaps the content between the sidecar markers for note.
+// replaced is false when the file has no complete marker pair.
+func replaceClaudeNote(existing, note string) (string, bool) {
+	start := strings.Index(existing, "<!-- "+claudeNoteMarker+" -->")
+	if start < 0 {
+		return existing, false
+	}
+	end := strings.Index(existing[start:], claudeNoteEndMarker)
+	if end < 0 {
+		return existing, false
+	}
+	end = start + end + len(claudeNoteEndMarker)
+	return existing[:start] + strings.TrimSuffix(note, "\n") + existing[end:], true
 }
 
 // offerClaudeHook asks whether to wire the queue into Claude Code — a
@@ -103,26 +135,34 @@ func offerClaudeHook(fileAbs string, sections []Section) {
 	}
 
 	fmt.Print(`
-Help Claude keep this queue updated? (adds an instruction for Claude Code)
+Help Claude keep this board updated?
+  [b] CLAUDE.md note + per-turn diff hook (recommended)
   [c] CLAUDE.md note only
-  [b] CLAUDE.md note + per-turn UserPromptSubmit reconcile hook (recommended)
   [n] no
-Choice [c/b/N]: `)
+Choice [B/c/n]: `)
 	switch readChoice() {
 	case "c":
 		writeClaudeNote(root, rel, sections)
-	case "b":
+	case "n":
+		return
+	default: // Enter or "b" — the hook is the product
 		writeClaudeNote(root, rel, sections)
 		writeReconcileHook(root, rel, sections)
-	default:
-		return
 	}
 }
 
 func writeClaudeNote(root, rel string, sections []Section) {
 	path := filepath.Join(root, "CLAUDE.md")
 	if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), claudeNoteMarker) {
-		fmt.Println("CLAUDE.md already has the sidecar note.")
+		if updated, ok := replaceClaudeNote(string(data), claudeNote(rel, sections)); ok {
+			if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, "sidecar init:", err)
+				return
+			}
+			fmt.Println("Updated the sidecar note in CLAUDE.md")
+			return
+		}
+		fmt.Println("CLAUDE.md has a sidecar marker but no closing marker — update it by hand.")
 		return
 	}
 	prefix := ""
@@ -168,12 +208,18 @@ func reconcileMessage(rel string, sections []Section) string {
 	return reconcileMessageLabels(rel, labels)
 }
 
-// reconcileHookEntry is a single Claude Code hook entry (one matcher, one
-// command) that echoes the reminder.
+// reconcileHookEntry runs `sidecar diff` when the binary is installed and
+// falls back to the static reminder otherwise — the reminder keeps the
+// sentinel phrase, so re-running init still finds and upgrades this hook.
 func reconcileHookEntry(rel string, sections []Section) map[string]any {
+	diffCmd := "sidecar diff"
+	if rel != filepath.Join(sidecarDirName, "sidecar.md") {
+		diffCmd += " " + shSingleQuote(rel)
+	}
+	cmd := "command -v sidecar >/dev/null 2>&1 && " + diffCmd + " || echo " + shSingleQuote(reconcileMessage(rel, sections))
 	return map[string]any{
 		"hooks": []any{
-			map[string]any{"type": "command", "command": "echo " + shSingleQuote(reconcileMessage(rel, sections))},
+			map[string]any{"type": "command", "command": cmd},
 		},
 	}
 }
@@ -311,6 +357,9 @@ func scaffold(abs string, sections []Section) error {
 	if _, err := os.Stat(abs); err == nil {
 		return nil
 	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(abs, []byte(renderTemplate(sections)), 0o644)
 }
 
@@ -354,6 +403,28 @@ func offerCreate(abs string) {
 func stdinIsTerminal() bool {
 	fi, err := os.Stdin.Stat()
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// excludeSidecarDir appends ".sidecar/" to the repo's .git/info/exclude —
+// local and uncommitted, so the repo never learns sidecar exists. No-op
+// outside a work tree or when the entry is already ignored.
+func excludeSidecarDir(dir string) {
+	if out, ok := git(dir, "rev-parse", "--is-inside-work-tree"); !ok || out != "true" {
+		return
+	}
+	if _, ignored := git(dir, "check-ignore", "-q", filepath.Join(dir, sidecarDirName)); ignored {
+		return
+	}
+	path, ok := git(dir, "rev-parse", "--git-path", "info/exclude")
+	if !ok {
+		return
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
+	}
+	if err := appendLine(path, sidecarDirName+"/"); err != nil {
+		fmt.Fprintln(os.Stderr, "sidecar init:", err)
+	}
 }
 
 // offerGitExclude prompts to keep the file out of git, when inside a work
