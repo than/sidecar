@@ -251,3 +251,29 @@ func TestDiffLinesFallbackWhenNoItemChanges(t *testing.T) {
 		t.Errorf("expected textual fallback for non-item change:\n%s", out)
 	}
 }
+
+// U2: a genuine item move ("task") happening in the same turn as unrelated
+// placeholder churn ("nothing yet" vacating one empty section while another
+// empty section appears) must not fabricate a cross-section "moved" line for
+// the placeholder — a placeholder has no identity to track across sections.
+func TestSemanticDiffAsymmetricPlaceholderNotMoved(t *testing.T) {
+	old := board(t, "## 🚧 In progress\n\n- task\n\n## ✅ Done\n\n- nothing yet\n")
+	new := board(t, "## 🚧 In progress\n\n- nothing yet\n\n## ✅ Done\n\n- task\n")
+	out := semanticDiff(old, new)
+
+	var movedLines []string
+	for _, line := range out {
+		if strings.HasPrefix(line, "moved ") {
+			movedLines = append(movedLines, line)
+		}
+	}
+	want := []string{`moved 🚧→✅: "task"`}
+	if len(movedLines) != len(want) || movedLines[0] != want[0] {
+		t.Fatalf("moved lines = %q, want %q\nfull output: %q", movedLines, want, out)
+	}
+	for _, line := range out {
+		if strings.Contains(line, "nothing yet") && strings.HasPrefix(line, "moved ") {
+			t.Errorf("placeholder churn fabricated a moved line: %q", line)
+		}
+	}
+}

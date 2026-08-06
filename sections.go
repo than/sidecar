@@ -58,6 +58,12 @@ func defaultSections() []Section {
 	}
 }
 
+// emptySectionPlaceholder is the bullet every scaffolded section starts
+// with. semanticDiff (semdiff.go) treats it as identity-free — it recurs by
+// design across sections and versions and must never be reported as an item
+// that "moved".
+const emptySectionPlaceholder = "nothing yet"
+
 // renderTemplate builds the starter file body for the chosen sections. Bare
 // URLs on their own line stay clickable; hintless sections are omitted from
 // the comment's "= meaning" list.
@@ -77,7 +83,7 @@ func renderTemplate(sections []Section) string {
 	b.WriteString("· One line per item where you can; bare URLs on their own line stay clickable.\n")
 	b.WriteString("-->\n\n")
 	for _, s := range sections {
-		b.WriteString(s.Header() + "\n\n- nothing yet\n\n")
+		b.WriteString(s.Header() + "\n\n- " + emptySectionPlaceholder + "\n\n")
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }

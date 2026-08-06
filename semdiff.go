@@ -31,7 +31,14 @@ func semanticDiff(old, new Board) []string {
 	// duplicated across sections (e.g. a shared placeholder like "nothing
 	// yet") never fabricates a moved line when an unmatched same-section
 	// candidate is sitting right there. Cross-section is the fallback, used
-	// only when no same-section candidate remains.
+	// only when no same-section candidate remains — except for the empty-
+	// section placeholder itself, which never gets the fallback: it recurs
+	// across sections and versions by design (every scaffolded section
+	// starts with it) and has no identity to track, so an asymmetric swap
+	// (one empty section's placeholder "vacating" while a different section
+	// happens to fall empty too) must never read as that placeholder
+	// "moving" — it's independent churn, reported (if at all) as its own
+	// added/removed lines in pass 3/4 below.
 	for _, n := range news {
 		var match *itemRef
 		for _, o := range byKey[n.item.Key] {
@@ -40,7 +47,7 @@ func semanticDiff(old, new Board) []string {
 				break
 			}
 		}
-		if match == nil {
+		if match == nil && n.item.Key != emptySectionPlaceholder {
 			for _, o := range byKey[n.item.Key] {
 				if !o.matched {
 					match = o
