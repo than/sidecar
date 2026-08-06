@@ -119,6 +119,121 @@ func TestLongBareURLNeverWraps(t *testing.T) {
 	}
 }
 
+// Two bare URLs that collide on their truncated display text (same prefix,
+// different tail) must each still get their OWN OSC 8 target — not the
+// first URL's target linked twice while the second gets none. Regression
+// for a reviewer-caught bug: linkifyTruncations searched from offset 0 on
+// every iteration, so the second occurrence of an identical display string
+// was "found" at the first occurrence's position, nesting both hyperlinks
+// on line one and leaving line two dead.
+func TestCollidingTruncationsBothLinked(t *testing.T) {
+	common := "https://example.test/" + strings.Repeat("a", 80)
+	url1 := common + "-one"
+	url2 := common + "-two"
+	raw := "- " + url1 + "\n- " + url2 + "\n"
+
+	out, err := renderMarkdown(raw, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Each target must land on its own line, one target per line — not both
+	// nested onto the first occurrence, leaving the second display line
+	// with no hyperlink of its own.
+	lines := strings.Split(out, "\n")
+	line1, line2 := -1, -1
+	for i, line := range lines {
+		has1 := strings.Contains(line, "\x1b]8;;"+url1)
+		has2 := strings.Contains(line, "\x1b]8;;"+url2)
+		if has1 && has2 {
+			t.Fatalf("line %d carries both targets nested together: %q", i, line)
+		}
+		if has1 {
+			line1 = i
+		}
+		if has2 {
+			line2 = i
+		}
+	}
+	if line1 < 0 {
+		t.Errorf("first URL's OSC 8 target missing:\n%q", out)
+	}
+	if line2 < 0 {
+		t.Errorf("second URL's OSC 8 target missing:\n%q", out)
+	}
+	if line1 >= 0 && line2 >= 0 {
+		if line1 == line2 {
+			t.Errorf("both targets landed on the same line %d", line1)
+		}
+		if line1 > line2 {
+			t.Errorf("targets out of document order: first on line %d, second on line %d", line1, line2)
+		}
+	}
+}
+
+// Bare URLs inside fenced code blocks are verbatim content, not board links
+// — this fix must not truncate them or wrap them in a hyperlink, silently
+// altering what the fence is supposed to reproduce exactly. (Glamour's own
+// document-level word-wrap can still rewrap an overlong fenced line — that's
+// pre-existing, independent behavior this fix doesn't touch or need to; the
+// width here is generous enough that it doesn't kick in, isolating the
+// check to what truncateBareURLs/linkifyTruncations do.)
+func TestBareURLInFenceUntouched(t *testing.T) {
+	url := "https://example.test/" + strings.Repeat("a", 80) + "/tail"
+	raw := "```\n- " + url + "\n```\n"
+
+	out, err := renderMarkdown(raw, 150)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := stripANSI(out)
+	if !strings.Contains(plain, url) {
+		t.Errorf("fenced URL was altered, full text not found:\n%s", plain)
+	}
+	if strings.Contains(plain, "…") {
+		t.Errorf("fenced URL was truncated:\n%s", plain)
+	}
+	if strings.Contains(out, "\x1b]8;;") {
+		t.Errorf("fenced URL was hyperlinked:\n%q", out)
+	}
+}
+
+// A nested bullet's extra indent must be accounted for in the truncation
+// budget. Regression for a reviewer-caught bug: reserve was hard-coded to 2
+// (a top-level bullet's "• "), so a nested "  - https://…" over-budgeted,
+// glamour force-broke it anyway, findPlainRange couldn't locate the
+// (wrongly sized) display text post-render, and the truncation was silently
+// dropped — leaving inert, unlinked, truncated-looking text strictly worse
+// than the pre-fix behavior.
+func TestNestedBareURLNeverWraps(t *testing.T) {
+	const url = "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
+	raw := "- outer\n  - " + url + "\n"
+	const width = 30
+
+	out, err := renderMarkdown(raw, width)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := stripANSI(out)
+	urlLines := 0
+	for _, line := range strings.Split(plain, "\n") {
+		if strings.Contains(line, "http") {
+			urlLines++
+		}
+	}
+	if urlLines != 1 {
+		t.Errorf("URL text spread across %d lines: %q", urlLines, plain)
+	}
+	for i, line := range strings.Split(out, "\n") {
+		if w := visibleWidth(line); w > width {
+			t.Errorf("line %d: visible width %d exceeds width: %q", i, w, stripANSI(line))
+		}
+	}
+	if !strings.Contains(out, "\x1b]8;;"+url) {
+		t.Errorf("OSC 8 hyperlink target for full URL not found in:\n%q", out)
+	}
+}
+
 // stripANSI and visibleWidth must treat OSC 8 hyperlink escapes as invisible
 // — otherwise the URL embedded in the escape target gets counted as visible
 // text and corrupts width checks and diff comparisons.

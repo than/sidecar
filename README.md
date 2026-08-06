@@ -48,7 +48,7 @@ The glamour style is built into the binary (`style.go`) and tuned for a narrow p
 
 - Compact, with at most one blank line between blocks, no margins, and no trailing-space padding.
 - Hex (truecolor) colors throughout, never 256-palette indexes, which Ghostty remaps.
-- Teal, underlined links. Bare URLs stay on their own line, so Ghostty can detect them and make them clickable.
+- Teal, underlined links. Bare URLs stay on their own line, so Ghostty can detect them and make them clickable. A URL wider than the pane is shortened with an ellipsis rather than wrapped — wrapping would split it into dead fragments — with the full URL kept as an OSC 8 hyperlink target, so the shortened text still opens the right place.
 - An H1 badge in black on lavender, H2 headings in muted amber with a `▍ ` prefix, and bold text in the default foreground.
 
 To adjust the colors, edit the `color…` constants at the top of `style.go` — links use `colorLink` — and rebuild.

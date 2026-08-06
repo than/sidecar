@@ -127,7 +127,7 @@ func styleConfig() ansi.StyleConfig {
 // from the pane width by the caller). Output is post-processed to guarantee
 // the hard requirements: no trailing-space padding, at most one blank line
 // between blocks, no leading/trailing blank runs.
-func renderMarkdown(raw string, width int) (string, error) {
+func renderMarkdown(rawIn string, width int) (string, error) {
 	if width < 10 {
 		width = 10
 	}
@@ -136,7 +136,43 @@ func renderMarkdown(raw string, width int) (string, error) {
 	// bare-URL-only line to fit before rendering, then re-attach the full
 	// URL as an OSC 8 hyperlink target after rendering so the visible,
 	// possibly-truncated text still opens the right place.
-	raw, truncations := truncateBareURLs(raw, width)
+	raw, truncations := truncateBareURLs(rawIn, width, nil)
+	out, err := glamourRender(raw, width)
+	if err != nil {
+		return "", err
+	}
+	out = tidy(out)
+	out, unresolved := linkifyTruncations(out, truncations)
+	if len(unresolved) == 0 {
+		return out, nil
+	}
+
+	// A truncation's display text couldn't be found post-render — the
+	// reserve estimate under-budgeted (e.g. an indent shape truncateBareURLs
+	// didn't anticipate) and glamour force-wrapped it after all. Truncated,
+	// inert text with no hyperlink would be worse than the pre-fix bug (at
+	// least the old broken fragments were plain URL text a terminal's own
+	// regex might partially match); fall back to rendering those specific
+	// URLs untruncated instead — same behavior as before this fix, only for
+	// the lines that need it — rather than risk a second miss compounding
+	// the first.
+	skip := make(map[string]bool, len(unresolved))
+	for _, t := range unresolved {
+		skip[t.full] = true
+	}
+	raw, truncations = truncateBareURLs(rawIn, width, skip)
+	out, err = glamourRender(raw, width)
+	if err != nil {
+		return "", err
+	}
+	out = tidy(out)
+	out, _ = linkifyTruncations(out, truncations) // best-effort; any further miss just stays untruncated
+	return out, nil
+}
+
+// glamourRender runs raw markdown through glamour at the given width, with
+// this file's style and truecolor forced on.
+func glamourRender(raw string, width int) (string, error) {
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(styleConfig()),
 		glamour.WithWordWrap(width),
@@ -147,13 +183,7 @@ func renderMarkdown(raw string, width int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	out, err := r.Render(raw)
-	if err != nil {
-		return "", err
-	}
-	out = tidy(out)
-	out = linkifyTruncations(out, truncations)
-	return out, nil
+	return r.Render(raw)
 }
 
 // tidy strips trailing-space padding and collapses runs of blank lines to a

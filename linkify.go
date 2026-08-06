@@ -30,26 +30,53 @@ type urlTruncation struct {
 	full    string // the original, untruncated URL
 }
 
+// fenceRE matches a fenced-code-block delimiter line (``` or ~~~, any
+// fence-length/info-string suffix), for tracking fence state line by line.
+var fenceRE = regexp.MustCompile("^(\\s*)(```+|~~~+)")
+
 // truncateBareURLs rewrites raw markdown so that any bare-URL-only line
 // wider than width is shortened to fit, with a trailing ellipsis. Lines that
-// already fit are left untouched — they render (and wrap-test) exactly as
-// before. Returns the rewritten markdown and the list of shortenings made,
-// so the caller can re-attach the full URL as an OSC 8 target after
-// rendering.
-func truncateBareURLs(raw string, width int) (string, []urlTruncation) {
+// already fit, or that fall inside a fenced code block (verbatim content —
+// truncating it would silently alter what the fence reproduces), are left
+// untouched. skip holds full URLs to leave untruncated regardless of width —
+// used by renderMarkdown to retry a line whose truncated form couldn't be
+// relocated after rendering (see renderMarkdown for why).
+//
+// Returns the rewritten markdown and the list of shortenings made, so the
+// caller can re-attach the full URL as an OSC 8 target after rendering.
+func truncateBareURLs(raw string, width int, skip map[string]bool) (string, []urlTruncation) {
 	lines := strings.Split(raw, "\n")
 	var truncations []urlTruncation
+	inFence := false
 	for i, line := range lines {
+		if fenceRE.MatchString(line) {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
 		m := bareURLLineRE.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
 		prefix, url := m[1], m[2]
+		if skip[url] {
+			continue
+		}
+		// Reserve the columns glamour will spend on indent + bullet: any
+		// leading whitespace in the source (one level of nesting per 2
+		// cols, matching styleConfig's List.LevelIndent) plus "• " for the
+		// marker itself. A plain, unbulleted line reserves nothing.
 		reserve := 0
 		if prefix != "" {
-			reserve = 2 // glamour renders any bullet marker as "• "
+			leadingWS := len(prefix) - len(strings.TrimLeft(prefix, " \t"))
+			reserve = leadingWS + 2
 		}
 		budget := width - reserve
+		// Nesting can push reserve arbitrarily high (unlike the old
+		// hard-coded reserve of 2), so this floor stays reachable: without
+		// it, deeply nested lines could get a negative/zero budget.
 		if budget < 8 {
 			budget = 8
 		}
@@ -72,19 +99,38 @@ func truncateBareURLs(raw string, width int) (string, []urlTruncation) {
 // hyperlink pointing at the full URL. The visible text is unchanged (still
 // the ellipsized form); only a terminal that understands OSC 8 sees the full
 // target, so clicking anywhere on the truncated text still opens it.
-func linkifyTruncations(rendered string, truncations []urlTruncation) string {
+//
+// Truncations are processed in document order with a cursor that only ever
+// moves forward: each search starts just past the previous replacement, not
+// from offset 0. Two truncations can legitimately share identical display
+// text (same prefix, budget cuts them at the same rune) — searching from 0
+// every time would keep re-finding the first occurrence, nesting every
+// later truncation's hyperlink inside the first one's and leaving the rest
+// of the document's occurrences unlinked.
+//
+// Any truncation whose display text can't be located (should only happen if
+// the reserve estimate in truncateBareURLs under-budgeted and glamour wrapped
+// it after all) is returned unresolved rather than silently dropped, so the
+// caller can fall back to rendering that URL untruncated.
+func linkifyTruncations(rendered string, truncations []urlTruncation) (string, []urlTruncation) {
+	var unresolved []urlTruncation
+	cursor := 0
 	for _, t := range truncations {
-		start, end, ok := findPlainRange(rendered, t.display)
+		start, end, ok := findPlainRange(rendered[cursor:], t.display)
 		if !ok {
+			unresolved = append(unresolved, t)
 			continue
 		}
+		start += cursor
+		end += cursor
 		r, g, b := hexToRGB(colorLink)
 		styled := osc8Open(t.full) +
 			"\x1b[4;38;2;" + strconv.Itoa(r) + ";" + strconv.Itoa(g) + ";" + strconv.Itoa(b) + "m" +
 			t.display + "\x1b[0m" + osc8Close
 		rendered = rendered[:start] + styled + rendered[end:]
+		cursor = start + len(styled)
 	}
-	return rendered
+	return rendered, unresolved
 }
 
 // findPlainRange locates the byte range within s — which may be laced with
@@ -162,11 +208,10 @@ func skipANSISeq(s string, i int) int {
 }
 
 // indexRunes finds the first index in haystack where needle occurs, or -1.
+// needle is never empty: findPlainRange rejects an empty plain substring
+// before this is reached.
 func indexRunes(haystack, needle []rune) int {
-	if len(needle) == 0 || len(needle) > len(haystack) {
-		if len(needle) == 0 {
-			return 0
-		}
+	if len(needle) > len(haystack) {
 		return -1
 	}
 	for i := 0; i+len(needle) <= len(haystack); i++ {
