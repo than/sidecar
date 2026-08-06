@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -185,6 +186,58 @@ func TestRunDiffHelpFlag(t *testing.T) {
 			t.Errorf("%s: stderr = %q, want empty", flag, errOut)
 		}
 	}
+}
+
+// S2: a large diff must be capped at 100 printed lines — the cap is on what
+// enters the prompt, so it applies to both the semantic and fallback
+// (unifiedU0) paths. Uses an unparseable 300-line change to force the
+// fallback path, whose output (1 header + 300 dels + 300 adds) comfortably
+// exceeds the cap.
+func TestRunDiffCapsLargeOutput(t *testing.T) {
+	dir := t.TempDir()
+	board := filepath.Join(dir, sidecarDirName, "sidecar.md")
+	os.MkdirAll(filepath.Join(dir, sidecarDirName), 0o755)
+
+	const n = 300
+	oldLines := make([]string, n)
+	newLines := make([]string, n)
+	for i := 0; i < n; i++ {
+		oldLines[i] = fmt.Sprintf("line%d", i)
+		newLines[i] = fmt.Sprintf("xline%d", i) // every line differs — no common prefix/suffix
+	}
+	oldRaw := strings.Join(oldLines, "\n") + "\n"
+	newRaw := strings.Join(newLines, "\n") + "\n"
+
+	os.WriteFile(board, []byte(oldRaw), 0o644)
+	withWorkDir(t, dir, func() {
+		captureStdout(t, func() { runDiff(nil) }) // seed snapshot
+		os.WriteFile(board, []byte(newRaw), 0o644)
+		out := captureStdout(t, func() { runDiff(nil) })
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+
+		full := diffLines(oldRaw, newRaw)
+		if len(full) <= 100 {
+			t.Fatalf("test setup didn't exceed the cap: %d raw diff lines", len(full))
+		}
+
+		// 100 capped lines + 1 tail line + 1 closing reminder line.
+		wantTotal := 100 + 1 + 1
+		if len(lines) != wantTotal {
+			t.Fatalf("printed %d lines, want %d:\n%s", len(lines), wantTotal, out)
+		}
+		for i := 0; i < 100; i++ {
+			if lines[i] != full[i] {
+				t.Errorf("line %d = %q, want %q", i, lines[i], full[i])
+			}
+		}
+		wantTail := fmt.Sprintf("… %d more lines — read the board", len(full)-100)
+		if lines[100] != wantTail {
+			t.Errorf("tail line = %q, want %q", lines[100], wantTail)
+		}
+		if !strings.Contains(lines[101], "the sidecar review queue") {
+			t.Errorf("last line missing closing reminder: %q", lines[101])
+		}
+	})
 }
 
 func TestRunDiffMissingBoardSilent(t *testing.T) {

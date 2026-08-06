@@ -51,12 +51,29 @@ func runDiff(args []string) int {
 		return 0
 	}
 
-	for _, line := range diffLines(string(prev), string(raw)) {
+	for _, line := range cappedDiffLines(diffLines(string(prev), string(raw))) {
 		fmt.Println(line)
 	}
 	fmt.Println(closingReminder(path, string(raw)))
 	writeSnapshot(snap, raw)
 	return 0
+}
+
+// maxDiffOutputLines caps what runDiff prints — the diff feeds straight into
+// the model's prompt on every turn, so an enormous change (a rewrite, a
+// paste) must not flood it; the board itself is always the source of truth.
+const maxDiffOutputLines = 100
+
+// cappedDiffLines truncates lines to maxDiffOutputLines, appending a tail
+// line noting how many were omitted. Applies uniformly to both diffLines
+// paths (semantic and unifiedU0 fallback) since the cap is on what enters
+// the prompt, not on how the diff was computed.
+func cappedDiffLines(lines []string) []string {
+	if len(lines) <= maxDiffOutputLines {
+		return lines
+	}
+	out := append([]string{}, lines[:maxDiffOutputLines]...)
+	return append(out, fmt.Sprintf("… %d more lines — read the board", len(lines)-maxDiffOutputLines))
 }
 
 // defaultBoardPath resolves the board for bare invocations: the .sidecar/
