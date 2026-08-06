@@ -270,6 +270,28 @@ func TestRunInitHelpFlag(t *testing.T) {
 	}
 }
 
+// W2: --yes/-y are not a pure no-op — they still gate the interactive
+// section picker (interactiveTTY() alone isn't a non-blocking guarantee, so
+// a caller that wants a guaranteed-non-interactive init should still pass
+// --yes). The help text must say so rather than call it a no-op.
+func TestRunInitHelpDocumentsYesSkipsPicker(t *testing.T) {
+	dir := t.TempDir()
+	var out string
+	withWorkDir(t, dir, func() {
+		out = captureStdout(t, func() {
+			runInit([]string{"-h"})
+		})
+	})
+	if !strings.Contains(out, "skip the section picker") {
+		t.Errorf("help text doesn't document --yes/-y as skipping the picker:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "--yes") && strings.Contains(line, "no-op") {
+			t.Errorf("--yes/-y help line still calls it a no-op: %q", line)
+		}
+	}
+}
+
 func TestInitNonInteractiveUsesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "SIDECAR.md")
@@ -504,7 +526,7 @@ func TestReplaceClaudeNoteNoMarker(t *testing.T) {
 
 func TestClaudeNoteWritingRules(t *testing.T) {
 	note := claudeNote(filepath.Join(sidecarDirName, "sidecar.md"), defaultSections())
-	for _, want := range []string{"Apple Developer documentation voice", "two sentences of detail", "bare URLs, each on its own line", "`Next:` line"} {
+	for _, want := range []string{"Apple Developer documentation voice", "two sentences of detail", "bare URLs, each on its own line", "`Next:` line", "never hard-wrap; the viewer wraps to the pane"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note missing %q", want)
 		}
@@ -517,7 +539,7 @@ func TestMigrateLegacyBoard(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- carry me over\n"), 0o644)
 	mustRun(t, dir, "git", "add", "SIDECAR.md")
 
-	if !migrateLegacyBoard(dir, true) {
+	if !migrateLegacyBoard(dir) {
 		t.Fatal("expected migration")
 	}
 	data, err := os.ReadFile(filepath.Join(dir, sidecarDirName, "sidecar.md"))
@@ -539,7 +561,7 @@ func TestMigrateLegacyBoardUntracked(t *testing.T) {
 	dir := t.TempDir()
 	mustRun(t, dir, "git", "init", "-q")
 	os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- local only\n"), 0o644)
-	if !migrateLegacyBoard(dir, true) {
+	if !migrateLegacyBoard(dir) {
 		t.Fatal("expected migration of an untracked board")
 	}
 	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err != nil {
@@ -547,37 +569,10 @@ func TestMigrateLegacyBoardUntracked(t *testing.T) {
 	}
 }
 
-// T1: without --yes and without a TTY to answer the prompt (e.g. a hook's
-// piped/EOF stdin), migrateLegacyBoard must leave the legacy board alone —
-// readChoice() on EOF returns "", which defaults to yes and would otherwise
-// rename a file no one agreed to move.
-func TestMigrateLegacyBoardNoTTYLeavesLegacyAlone(t *testing.T) {
-	dir := t.TempDir()
-	mustRun(t, dir, "git", "init", "-q")
-	os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- carry me over\n"), 0o644)
-
-	// go test's own stdin is not a terminal, matching the hook scenario —
-	// no explicit redirect needed, but withStdin("") makes the EOF condition
-	// explicit and reproducible regardless of how the test binary is run.
-	var migrated bool
-	withStdin(t, "", func() {
-		migrated = migrateLegacyBoard(dir, false)
-	})
-	if migrated {
-		t.Error("migrated with no TTY to answer the prompt")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "SIDECAR.md")); err != nil {
-		t.Error("legacy board was moved despite no TTY")
-	}
-	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err == nil {
-		t.Error("new board created despite no TTY to confirm migration")
-	}
-}
-
 func TestMigrateLegacyBoardNothingToDo(t *testing.T) {
 	dir := t.TempDir()
 	mustRun(t, dir, "git", "init", "-q")
-	if migrateLegacyBoard(dir, true) {
+	if migrateLegacyBoard(dir) {
 		t.Error("migrated with no legacy file present")
 	}
 }
@@ -684,7 +679,7 @@ func TestMigrateLegacyBoardMessageIsRelative(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := captureStdout(t, func() {
-		if !migrateLegacyBoard(dir, true) {
+		if !migrateLegacyBoard(dir) {
 			t.Fatal("expected migration")
 		}
 	})
@@ -805,6 +800,295 @@ func TestRunInitYesNonInteractive(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(filepath.Join(dir, ".claude", "settings.json")); !strings.Contains(string(data), "sidecar diff") {
 		t.Error("hook not written")
+	}
+}
+
+// Issue #16: bare `sidecar init` in a fresh git repo must install everything
+// — board, git-exclude, CLAUDE.md note, reconcile hook — without reading a
+// single answer from stdin (stdin stays empty; a prompt read would hang on a
+// real, non-piped run and here would just return "" — the test instead
+// checks no prompt text was printed at all).
+func TestInitBareInstallsEverythingNoPrompts(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	var code int
+	var out string
+	withWorkDir(t, dir, func() {
+		withStdin(t, "", func() {
+			out = captureStdout(t, func() {
+				code = runInit(nil)
+			})
+		})
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	for _, unwanted := range []string{"[Y/n]", "[B/c/n]", "[E/g/n]", "Choice"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("bare init printed a prompt %q:\n%s", unwanted, out)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err != nil {
+		t.Error("board not created")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude")); !strings.Contains(string(data), ".sidecar/") {
+		t.Error(".sidecar/ not excluded")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md")); !strings.Contains(string(data), "sidecar:review-queue") {
+		t.Error("CLAUDE.md note not written")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, ".claude", "settings.json")); !strings.Contains(string(data), "sidecar diff") {
+		t.Error("hook not written")
+	}
+}
+
+// Issue #16: a root-level SIDECAR.md is migrated silently by bare init — no
+// [Y/n] prompt, no need for a TTY to answer it.
+func TestInitBareMigratesLegacySilently(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- carry me over\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, dir, "git", "add", "SIDECAR.md")
+
+	var code int
+	var out string
+	withWorkDir(t, dir, func() {
+		withStdin(t, "", func() {
+			out = captureStdout(t, func() {
+				code = runInit(nil)
+			})
+		})
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if strings.Contains(out, "[Y/n]") {
+		t.Errorf("migration prompt printed on bare init:\n%s", out)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, sidecarDirName, "sidecar.md"))
+	if err != nil || !strings.Contains(string(data), "carry me over") {
+		t.Fatalf("board content lost: %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "SIDECAR.md")); !os.IsNotExist(err) {
+		t.Error("legacy file still present")
+	}
+}
+
+// Issue #16: --no-claude installs the board (and exclude) but leaves
+// CLAUDE.md and .claude/settings.json untouched.
+func TestInitNoClaudeSkipsNoteAndHook(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	withWorkDir(t, dir, func() {
+		withStdin(t, "", func() {
+			captureStdout(t, func() {
+				if code := runInit([]string{"--no-claude"}); code != 0 {
+					t.Fatalf("exit = %d", code)
+				}
+			})
+		})
+	})
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err != nil {
+		t.Error("board not created")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Error("CLAUDE.md was written despite --no-claude")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Error(".claude/settings.json was written despite --no-claude")
+	}
+}
+
+// Issue #16 (W1): --keep-board leaves a legacy root SIDECAR.md exactly where
+// it is and targets init against it directly — no competing
+// .sidecar/sidecar.md is scaffolded, since that would silently shadow the
+// kept board (defaultBoardPath prefers the .sidecar/ home). Note, hook, and
+// exclude wire against SIDECAR.md itself, via the same code paths a custom
+// board path already uses.
+func TestInitKeepBoardSkipsMigration(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- stay put\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withWorkDir(t, dir, func() {
+		withStdin(t, "", func() {
+			captureStdout(t, func() {
+				if code := runInit([]string{"--keep-board"}); code != 0 {
+					t.Fatalf("exit = %d", code)
+				}
+			})
+		})
+	})
+	data, err := os.ReadFile(filepath.Join(dir, "SIDECAR.md"))
+	if err != nil || !strings.Contains(string(data), "stay put") {
+		t.Fatalf("legacy board disturbed: %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err == nil {
+		t.Error(".sidecar/sidecar.md was scaffolded, shadowing the kept legacy board")
+	}
+	withWorkDir(t, dir, func() {
+		if got := defaultBoardPath(); got != "SIDECAR.md" {
+			t.Errorf("defaultBoardPath() = %q, want SIDECAR.md to still resolve as the board", got)
+		}
+	})
+	// Note/hook wired against the legacy board's own path, not the default.
+	claude, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if !strings.Contains(string(claude), "Maintain `SIDECAR.md`") {
+		t.Errorf("CLAUDE.md note not wired to SIDECAR.md:\n%s", claude)
+	}
+	settings, _ := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if !strings.Contains(string(settings), "sidecar diff 'SIDECAR.md'") {
+		t.Errorf("reconcile hook not wired to SIDECAR.md:\n%s", settings)
+	}
+}
+
+// Round 2, X2: when BOTH a legacy root SIDECAR.md and a .sidecar/sidecar.md
+// already exist, --keep-board must NOT retarget init at the legacy file —
+// defaultBoardPath() still prefers .sidecar/sidecar.md, so wiring the
+// note/hook/"Watch it" hint to SIDECAR.md would point them at a board the
+// viewer won't open. The legacy file is still left untouched (no migration),
+// but init proceeds against the default board as usual.
+func TestInitKeepBoardBothBoardsPresentKeepsDefaultTarget(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- legacy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, sidecarDirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, sidecarDirName, "sidecar.md"), []byte("## 🧠 Needs action\n\n- current\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withWorkDir(t, dir, func() {
+		withStdin(t, "", func() {
+			captureStdout(t, func() {
+				if code := runInit([]string{"--keep-board"}); code != 0 {
+					t.Fatalf("exit = %d", code)
+				}
+			})
+		})
+	})
+	// Legacy file untouched — no migration.
+	if data, err := os.ReadFile(filepath.Join(dir, "SIDECAR.md")); err != nil || !strings.Contains(string(data), "legacy") {
+		t.Fatalf("legacy board disturbed: %q, %v", data, err)
+	}
+	// The default board is the one wired up, not the legacy file.
+	claude, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if !strings.Contains(string(claude), "Maintain `"+filepath.Join(sidecarDirName, "sidecar.md")+"`") {
+		t.Errorf("CLAUDE.md note not wired to the default board:\n%s", claude)
+	}
+	if strings.Contains(string(claude), "Maintain `SIDECAR.md`") {
+		t.Errorf("CLAUDE.md note wired to the legacy board instead of the default:\n%s", claude)
+	}
+	settings, _ := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if !strings.Contains(string(settings), "sidecar diff --help") || strings.Contains(string(settings), "sidecar diff 'SIDECAR.md'") {
+		t.Errorf("reconcile hook not wired to the default board:\n%s", settings)
+	}
+}
+
+// Round 2, X3: a git-tracked legacy board kept via --keep-board can't
+// usefully go into .git/info/exclude (git doesn't stop tracking a file just
+// because it's ignored) — init must print the untrack command instead of a
+// misleading "Added …" confirmation, and must not write a no-op exclude
+// entry.
+func TestInitKeepBoardTrackedLegacyPrintsUntrackHint(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- tracked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, dir, "git", "add", "SIDECAR.md")
+
+	var out string
+	withWorkDir(t, dir, func() {
+		withStdin(t, "", func() {
+			out = captureStdout(t, func() {
+				if code := runInit([]string{"--keep-board"}); code != 0 {
+					t.Fatalf("exit = %d", code)
+				}
+			})
+		})
+	})
+	if !strings.Contains(out, "SIDECAR.md is tracked — run 'git rm --cached SIDECAR.md' to untrack it.") {
+		t.Errorf("missing untrack hint:\n%s", out)
+	}
+	// Round 4, AA1: the entry is still written — silently, since it's a
+	// no-op while the file stays tracked but takes effect the instant the
+	// human runs the untrack command above.
+	if strings.Contains(out, `Added "SIDECAR.md"`) {
+		t.Errorf("printed a misleading exclude confirmation for a tracked file:\n%s", out)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if !strings.Contains(string(data), "SIDECAR.md") {
+		t.Errorf("info/exclude missing SIDECAR.md — entry should be written (silently) even while tracked: %q", data)
+	}
+	// Round 3, Z1: the .sidecar/ snapshot dir that `sidecar diff` will
+	// create beside the tracked board must still be excluded, even though
+	// the board itself can't be — otherwise the first `sidecar diff` run
+	// litters git status.
+	if !strings.Contains(string(data), sidecarDirName+"/") {
+		t.Errorf("info/exclude missing %s/ snapshot dir for a tracked legacy board: %q", sidecarDirName, data)
+	}
+}
+
+// Round 4, AA2: the exclude entry (and the snapshot-dir entry) must be
+// repo-relative, the same way gitExcludeDefault computes it — otherwise
+// running --keep-board on a tracked legacy board from a repo subdirectory
+// writes a bare "SIDECAR.md" / ".sidecar/" that doesn't match the file's
+// actual repo-relative path.
+func TestInitKeepBoardTrackedLegacyFromSubdirUsesRepoRelativePath(t *testing.T) {
+	root := t.TempDir()
+	mustRun(t, root, "git", "init", "-q")
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- tracked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, root, "git", "add", "sub/SIDECAR.md")
+
+	withWorkDir(t, sub, func() {
+		withStdin(t, "", func() {
+			captureStdout(t, func() {
+				if code := runInit([]string{"--keep-board"}); code != 0 {
+					t.Fatalf("exit = %d", code)
+				}
+			})
+		})
+	})
+	data, _ := os.ReadFile(filepath.Join(root, ".git", "info", "exclude"))
+	if !strings.Contains(string(data), filepath.Join("sub", "SIDECAR.md")) {
+		t.Errorf("info/exclude missing repo-relative sub/SIDECAR.md: %q", data)
+	}
+	if !strings.Contains(string(data), filepath.Join("sub", sidecarDirName)+"/") {
+		t.Errorf("info/exclude missing repo-relative sub/%s/: %q", sidecarDirName, data)
+	}
+}
+
+// Issue #16: the reconcile reminder uses bare `sidecar` (not the path) when
+// rel is the default board location, and keeps the explicit path for a
+// custom board. The sentinel phrase must survive verbatim either way.
+func TestReconcileMessageBareSidecarForDefaultBoard(t *testing.T) {
+	defRel := filepath.Join(sidecarDirName, "sidecar.md")
+	msg := reconcileMessage(defRel, defaultSections())
+	if !strings.Contains(msg, "the human watches with `sidecar`.") {
+		t.Errorf("default board should use bare `sidecar`:\n%s", msg)
+	}
+	if !strings.Contains(msg, hookSentinel) {
+		t.Errorf("reminder lost the sentinel:\n%s", msg)
+	}
+
+	custom := reconcileMessage("notes.md", defaultSections())
+	if !strings.Contains(custom, "the human watches with `sidecar notes.md`.") {
+		t.Errorf("custom board should keep the explicit path:\n%s", custom)
+	}
+	if !strings.Contains(custom, hookSentinel) {
+		t.Errorf("reminder lost the sentinel:\n%s", custom)
 	}
 }
 

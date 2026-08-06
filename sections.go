@@ -102,6 +102,7 @@ func renderTemplate(sections []Section) string {
 	}
 	b.WriteString("· Prune early sections as items move; let later ones accumulate as a log.\n")
 	b.WriteString("· One line per item where you can; bare URLs on their own line stay clickable.\n")
+	b.WriteString("· Never hard-wrap entry text — the viewer wraps to the pane; source newlines become visible breaks.\n")
 	b.WriteString("-->\n\n")
 	for _, s := range sections {
 		b.WriteString(s.Header() + "\n\n- " + emptySectionPlaceholder + "\n\n")
