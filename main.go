@@ -10,7 +10,7 @@ import (
 	"golang.org/x/term"
 )
 
-const defaultFile = "SIDECAR.md"
+const legacyFile = "SIDECAR.md"
 
 // version is overwritten at release time via -ldflags -X main.version.
 var version = "dev"

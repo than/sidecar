@@ -151,7 +151,7 @@ func sectionFromLabel(label string) Section {
 // and untracks it when git knows it. assumeYes skips the prompt. Returns
 // true when a move happened.
 func migrateLegacyBoard(root string, assumeYes bool) bool {
-	legacy := filepath.Join(root, defaultFile)
+	legacy := filepath.Join(root, legacyFile)
 	target := filepath.Join(root, sidecarDirName, "sidecar.md")
 	if _, err := os.Stat(legacy); err != nil {
 		return false
@@ -164,9 +164,9 @@ func migrateLegacyBoard(root string, assumeYes bool) bool {
 		targetRel = rel
 	}
 	if !assumeYes {
-		fmt.Printf("Move %s into %s/? [Y/n]: ", defaultFile, sidecarDirName)
+		fmt.Printf("Move %s into %s/? [Y/n]: ", legacyFile, sidecarDirName)
 		if c := readChoice(); c == "n" || c == "no" {
-			fmt.Printf("Left %s in place — %s will take precedence once you create it.\n", defaultFile, targetRel)
+			fmt.Printf("Left %s in place — %s will take precedence once you create it.\n", legacyFile, targetRel)
 			return false
 		}
 	}
@@ -178,11 +178,11 @@ func migrateLegacyBoard(root string, assumeYes bool) bool {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
 		return false
 	}
-	if _, tracked := git(root, "ls-files", "--error-unmatch", defaultFile); tracked {
-		git(root, "rm", "--cached", "--quiet", defaultFile)
-		fmt.Printf("Moved %s to %s and untracked it — commit the deletion when ready.\n", defaultFile, targetRel)
+	if _, tracked := git(root, "ls-files", "--error-unmatch", legacyFile); tracked {
+		git(root, "rm", "--cached", "--quiet", legacyFile)
+		fmt.Printf("Moved %s to %s and untracked it — commit the deletion when ready.\n", legacyFile, targetRel)
 	} else {
-		fmt.Printf("Moved %s to %s.\n", defaultFile, targetRel)
+		fmt.Printf("Moved %s to %s.\n", legacyFile, targetRel)
 	}
 	return true
 }

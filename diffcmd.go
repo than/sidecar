@@ -67,8 +67,8 @@ func defaultBoardPath() string {
 	if _, err := os.Stat(home); err == nil {
 		return home
 	}
-	if _, err := os.Stat(defaultFile); err == nil {
-		return defaultFile
+	if _, err := os.Stat(legacyFile); err == nil {
+		return legacyFile
 	}
 	return home
 }
