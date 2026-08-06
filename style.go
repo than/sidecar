@@ -29,6 +29,7 @@ const (
 	colorStatusBg    = "#26262A" // status bar background
 	colorUpdated     = "#5FE3A1" // bright ▸ marking a changed line
 	colorFlashLineBg = "#2A2A33" // subtle bg lightening on a just-changed line
+	colorCursorBg    = "#3A3550" // section-cursor highlight, distinct from the reload flash
 )
 
 func ptr[T any](v T) *T { return &v }

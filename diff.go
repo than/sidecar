@@ -137,6 +137,37 @@ func isBulletLine(ln string) bool {
 	return strings.HasPrefix(t, "• ")
 }
 
+// sectionHeaderLines returns the indices of lines that are a rendered H2
+// heading — glamour's "▍ " prefix (style.go) — in document order. For a
+// board file this lines up 1:1 with board.Sections, since every board
+// section is an H2 in the same order it appears in the source.
+func sectionHeaderLines(lines []string) []int {
+	var idx []int
+	for i, ln := range lines {
+		t := stripANSI(ln)
+		if strings.HasPrefix(t, "▍ ") {
+			idx = append(idx, i)
+		}
+	}
+	return idx
+}
+
+// applyCursorHighlight tints headerLines[cursor] with colorCursorBg, the
+// section the cursor is currently on. A no-op when cursor is out of range
+// (including the -1 "no board parsed" case).
+func applyCursorHighlight(display string, headerLines []int, cursor int, width int) string {
+	if cursor < 0 || cursor >= len(headerLines) {
+		return display
+	}
+	idx := headerLines[cursor]
+	lines := strings.Split(display, "\n")
+	if idx < 0 || idx >= len(lines) {
+		return display
+	}
+	lines[idx] = applyLineBg(lines[idx], colorCursorBg, width)
+	return strings.Join(lines, "\n")
+}
+
 // applyLineBg tints the whole visible line with the given hex background,
 // re-applying it after each SGR reset (a reset would otherwise clear the
 // background mid-line), and pads to width so the tint spans the pane.

@@ -193,3 +193,53 @@ func TestChangedLinesCapDegradesToEmpty(t *testing.T) {
 		t.Errorf("oversized diff should mark nothing, got %d", got)
 	}
 }
+
+func TestSectionHeaderLinesFindsH2sInOrder(t *testing.T) {
+	lines := []string{
+		"",
+		"▍ 🧠 Needs action (1)",
+		"",
+		"• item",
+		"",
+		"▍ ✅ Done (0)",
+		"",
+	}
+	got := sectionHeaderLines(lines)
+	if len(got) != 2 || got[0] != 1 || got[1] != 5 {
+		t.Errorf("sectionHeaderLines = %v, want [1 5]", got)
+	}
+}
+
+func TestSectionHeaderLinesIgnoresNonHeadingLines(t *testing.T) {
+	lines := []string{"▍ not a bullet but", "  ▍ indented, not a heading start"}
+	got := sectionHeaderLines(lines)
+	if len(got) != 1 || got[0] != 0 {
+		t.Errorf("sectionHeaderLines = %v, want [0]", got)
+	}
+}
+
+func TestApplyCursorHighlightTintsTheRightLine(t *testing.T) {
+	display := "▍ heading one\n• item\n▍ heading two"
+	out := applyCursorHighlight(display, []int{0, 2}, 1, 40)
+	lines := strings.Split(out, "\n")
+
+	if lines[0] != "▍ heading one" {
+		t.Errorf("line 0 should be untouched, got %q", lines[0])
+	}
+	if stripANSI(lines[2]) == lines[2] {
+		t.Error("cursor's header line (index 2) should carry ANSI tinting")
+	}
+	if !strings.Contains(lines[2], "heading two") {
+		t.Errorf("tinted line lost its text: %q", lines[2])
+	}
+}
+
+func TestApplyCursorHighlightNoCursorIsPassthrough(t *testing.T) {
+	display := "▍ heading\n• item"
+	if out := applyCursorHighlight(display, []int{0}, -1, 40); out != display {
+		t.Errorf("cursor -1 should pass through unchanged, got %q", out)
+	}
+	if out := applyCursorHighlight(display, []int{0}, 5, 40); out != display {
+		t.Errorf("out-of-range cursor should pass through unchanged, got %q", out)
+	}
+}
