@@ -67,6 +67,30 @@ func TestRenderTemplateDefault(t *testing.T) {
 	}
 }
 
+// U3: leadingEmoji's old `r > 0x2600` catch-all matched CJK/kana/Hangul —
+// "完了 tasks" isn't emoji-led, and must be treated as a text-only label.
+func TestLeadingEmojiRejectsCJK(t *testing.T) {
+	if emoji, ok := leadingEmoji("完了 tasks"); ok {
+		t.Errorf("leadingEmoji(%q) = %q, true — want no emoji detected for CJK text", "完了 tasks", emoji)
+	}
+	if got := sectionTag("完了 tasks"); got != "完了 tasks" {
+		t.Errorf("sectionTag(CJK) = %q, want the full label", got)
+	}
+	if got := sectionFromLabel("完了 tasks").Emoji; got != "" {
+		t.Errorf("sectionFromLabel(CJK).Emoji = %q, want empty", got)
+	}
+}
+
+// U3 regression guard: real emoji sections must still be detected.
+func TestLeadingEmojiStillAcceptsRealEmoji(t *testing.T) {
+	if emoji, ok := leadingEmoji("🧠 Needs action"); !ok || emoji != "🧠" {
+		t.Errorf("leadingEmoji(🧠 Needs action) = %q, %v, want 🧠, true", emoji, ok)
+	}
+	if got := sectionTag("🧠 Needs action"); got != "🧠" {
+		t.Errorf("sectionTag(🧠 Needs action) = %q, want 🧠", got)
+	}
+}
+
 func TestRenderTemplateCustomNoHint(t *testing.T) {
 	out := renderTemplate([]Section{{"", "Todo", ""}})
 	if !strings.Contains(out, "## Todo\n") {

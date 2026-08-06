@@ -6,17 +6,38 @@ import (
 	"unicode"
 )
 
+// isEmojiRune reports whether r is plausibly an emoji: a Unicode "other
+// symbol" (So, e.g. ✅ 📦), or a rune in one of the explicit emoji blocks —
+// pictographs (0x1F300–0x1FAFF), the misc-symbols/dingbats band including
+// arrows and stars (0x2600–0x27BF), misc symbols and arrows-B
+// (0x2B00–0x2BFF), or the variation selector that renders a preceding glyph
+// as emoji (0xFE0F). A blanket "r > 0x2600" also matched CJK ideographs,
+// kana, and Hangul (all well above 0x2600), so it's intentionally not used.
+func isEmojiRune(r rune) bool {
+	if unicode.In(r, unicode.So) {
+		return true
+	}
+	switch {
+	case r >= 0x1F300 && r <= 0x1FAFF,
+		r >= 0x2600 && r <= 0x27BF,
+		r >= 0x2B00 && r <= 0x2BFF,
+		r == 0xFE0F:
+		return true
+	}
+	return false
+}
+
 // leadingEmoji reports whether label's first whitespace-separated field is a
-// leading emoji/symbol — "starts with an emoji" ≈ the first field's first
-// rune is a symbol. Shared by sectionTag (semdiff.go, for the short diff-line
+// leading emoji. Shared by sectionTag (semdiff.go, for the short diff-line
 // tag) and sectionFromLabel (below, for splitting a heading into
 // Section.Emoji/Name); ok is false when label is a single field or its first
-// field isn't a symbol.
+// field's first rune isn't emoji (including any other non-ASCII text, like
+// CJK, that isn't).
 func leadingEmoji(label string) (emoji string, ok bool) {
 	fields := strings.Fields(label)
 	if len(fields) > 1 {
 		r := []rune(fields[0])[0]
-		if unicode.IsSymbol(r) || r > 0x2600 {
+		if isEmojiRune(r) {
 			return fields[0], true
 		}
 	}
