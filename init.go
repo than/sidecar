@@ -92,15 +92,14 @@ func runInit(args []string) int {
 	}
 
 	if filepath.Base(filepath.Dir(abs)) == sidecarDirName {
-		root := repoRoot(filepath.Dir(filepath.Dir(abs)))
-		excludeSidecarDir(root, true)
+		excludeSidecarDir(repoRootForBoard(abs), true)
 	} else if assumeYes {
 		gitExcludeDefault(abs)
 	} else {
 		offerGitExclude(abs)
 	}
 	if assumeYes {
-		root := repoRoot(filepath.Dir(abs))
+		root := repoRootForBoard(abs)
 		rel, err := filepath.Rel(root, abs)
 		if err != nil {
 			rel = filepath.Base(abs)
@@ -269,7 +268,7 @@ func offerClaudeHook(fileAbs string, sections []Section) {
 	if !stdinIsTerminal() {
 		return
 	}
-	root := repoRoot(filepath.Dir(fileAbs))
+	root := repoRootForBoard(fileAbs)
 	rel, err := filepath.Rel(root, fileAbs)
 	if err != nil {
 		rel = filepath.Base(fileAbs)
@@ -594,7 +593,7 @@ func offerGitExclude(fileAbs string) {
 		// the same automatic whole-dir exclude as the default board — never
 		// the custom-path prompt, which would exclude just the one file and
 		// leave the rest of .sidecar/ (including the snapshot) untracked.
-		excludeSidecarDir(repoRoot(dir), true)
+		excludeSidecarDir(repoRootForBoard(fileAbs), true)
 		return
 	}
 	if out, ok := git(dir, "rev-parse", "--is-inside-work-tree"); !ok || out != "true" {
@@ -642,7 +641,7 @@ func gitExcludeDefault(fileAbs string) {
 	dir := filepath.Dir(fileAbs)
 	if filepath.Base(dir) == sidecarDirName {
 		// Same automatic whole-dir exclude as offerGitExclude — see there.
-		excludeSidecarDir(repoRoot(dir), true)
+		excludeSidecarDir(repoRootForBoard(fileAbs), true)
 		return
 	}
 	if out, ok := git(dir, "rev-parse", "--is-inside-work-tree"); !ok || out != "true" {
@@ -730,6 +729,24 @@ func repoRoot(dir string) string {
 		return r
 	}
 	return dir
+}
+
+// repoRootForBoard resolves the root that should own a board's CLAUDE.md
+// note and hook. It's the board's own parent directory — except when that
+// parent is .sidecar/ (the default board's home), where it steps up one
+// more level first. Outside a git work tree repoRoot has no toplevel to
+// override the fallback, so without that step-up a default board
+// (.sidecar/sidecar.md) would seed CLAUDE.md and .claude/settings.json
+// *inside* .sidecar/ and compute rel as the bare "sidecar.md" — a path that
+// doesn't exist at the resulting (wrong) root, breaking the hook. Same
+// reasoning offerGitExclude/gitExcludeDefault already use for the exclude
+// path.
+func repoRootForBoard(boardAbs string) string {
+	dir := filepath.Dir(boardAbs)
+	if filepath.Base(dir) == sidecarDirName {
+		dir = filepath.Dir(dir)
+	}
+	return repoRoot(dir)
 }
 
 // git runs a git command in dir and returns trimmed stdout; ok is false if

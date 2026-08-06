@@ -752,6 +752,40 @@ func TestRunInitRerunRoundTripsHints(t *testing.T) {
 	}
 }
 
+// V1: outside a git work tree, repoRoot(filepath.Dir(abs)) for the default
+// board (.sidecar/sidecar.md) falls back to .sidecar/ itself (no git
+// toplevel to override it) — CLAUDE.md and .claude/settings.json must still
+// land at the project root, not inside .sidecar/, and the hook must
+// reference the default board bare ('sidecar diff', no explicit path).
+func TestRunInitYesNonGitDefaultBoardSeedsAtRoot(t *testing.T) {
+	dir := t.TempDir() // deliberately no `git init`
+	withWorkDir(t, dir, func() {
+		if code := runInit([]string{"--yes"}); code != 0 {
+			t.Fatalf("exit = %d", code)
+		}
+	})
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err != nil {
+		t.Fatal("board not created")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err != nil {
+		t.Error("CLAUDE.md not written at the top level")
+	}
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "CLAUDE.md")); err == nil {
+		t.Error("CLAUDE.md wrongly written inside .sidecar/")
+	}
+	settingsPath := filepath.Join(dir, ".claude", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("settings.json not written at .claude/settings.json: %v", err)
+	}
+	if !strings.Contains(string(data), "sidecar diff") {
+		t.Error("hook missing sidecar diff")
+	}
+	if strings.Contains(string(data), "sidecar diff sidecar.md") || strings.Contains(string(data), "sidecar diff '") {
+		t.Errorf("hook references a bad relative path instead of the bare default board:\n%s", data)
+	}
+}
+
 func TestRunInitYesNonInteractive(t *testing.T) {
 	dir := t.TempDir()
 	mustRun(t, dir, "git", "init", "-q")
