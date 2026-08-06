@@ -4,3 +4,6 @@
 
 # GoReleaser build output
 /dist/
+
+# SDD scratch (docs/superpowers/ is the real docs tree; this isn't)
+/.superpowers/
