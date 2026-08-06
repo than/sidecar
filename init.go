@@ -69,6 +69,11 @@ func runInit(args []string) int {
 			if parsed, ok := sectionsFromBoard(string(raw)); ok {
 				sections = parsed
 			}
+		} else if !os.IsNotExist(rerr) {
+			// abs just Stat'd successfully, so this is something like
+			// EACCES, not a race — falling back to the default five
+			// silently would be surprising; say so.
+			fmt.Fprintln(os.Stderr, "sidecar init: could not read", target, "—", rerr)
 		}
 	} else {
 		if !assumeYes && interactiveTTY() {
@@ -124,9 +129,20 @@ func sectionsFromBoard(raw string) ([]Section, bool) {
 	if !ok {
 		return nil, false
 	}
+	// Index the built-in five by their rendered label so a section that
+	// matches one exactly gets its Hint back — sectionFromLabel can't
+	// recover a Hint from the heading text alone, and without this every
+	// re-run of init over a default (or default-derived) board silently
+	// drops the "— hint" lines from the CLAUDE.md note.
+	knownHints := map[string]string{}
+	for _, s := range defaultSections() {
+		knownHints[s.label()] = s.Hint
+	}
 	sections := make([]Section, len(b.Sections))
 	for i, s := range b.Sections {
-		sections[i] = sectionFromLabel(s.Label)
+		sec := sectionFromLabel(s.Label)
+		sec.Hint = knownHints[s.Label]
+		sections[i] = sec
 	}
 	return sections, true
 }

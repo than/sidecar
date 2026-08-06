@@ -721,6 +721,37 @@ func TestRunInitSuppressesAlreadyExistsAfterMigration(t *testing.T) {
 	}
 }
 
+// U1: re-running init over an existing default board must not silently drop
+// each section's " — hint" line from the CLAUDE.md note — sectionsFromBoard
+// derives Sections from the rendered heading alone (no Hint recoverable
+// there), so it must backfill Hint from defaultSections() when the label
+// matches exactly.
+func TestRunInitRerunRoundTripsHints(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	withWorkDir(t, dir, func() {
+		if code := runInit([]string{"--yes"}); code != 0 {
+			t.Fatalf("first run exit = %d", code)
+		}
+		if code := runInit([]string{"--yes"}); code != 0 {
+			t.Fatalf("second run exit = %d", code)
+		}
+	})
+	data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range defaultSections() {
+		if s.Hint == "" {
+			continue
+		}
+		want := "— " + s.Hint
+		if !strings.Contains(string(data), want) {
+			t.Errorf("CLAUDE.md missing hint %q after re-run:\n%s", want, data)
+		}
+	}
+}
+
 func TestRunInitYesNonInteractive(t *testing.T) {
 	dir := t.TempDir()
 	mustRun(t, dir, "git", "init", "-q")
