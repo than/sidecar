@@ -44,6 +44,14 @@ func runDiff(args []string) int {
 	snap := snapshotPath(abs)
 	prev, err := os.ReadFile(snap)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			// Some other read failure (e.g. EACCES) — writing would likely
+			// fail too, and reseeding here would lose the baseline forever.
+			// Report it and leave the snapshot untouched; the next run tries
+			// again rather than silently treating this as a fresh start.
+			fmt.Fprintln(os.Stderr, "sidecar diff:", err)
+			return 0
+		}
 		writeSnapshot(snap, raw) // first run — seed silently
 		return 0
 	}

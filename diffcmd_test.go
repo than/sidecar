@@ -240,6 +240,62 @@ func TestRunDiffCapsLargeOutput(t *testing.T) {
 	})
 }
 
+// S3: a snapshot that exists but can't be read (e.g. EACCES) must not be
+// silently treated as first-run and reseeded — that would quietly lose the
+// baseline. It should report the error and leave the snapshot alone.
+func TestRunDiffUnreadableSnapshotReportsErrorWithoutReseeding(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root — permission bits don't block reads")
+	}
+	dir := t.TempDir()
+	board := filepath.Join(dir, sidecarDirName, "sidecar.md")
+	os.MkdirAll(filepath.Join(dir, sidecarDirName), 0o755)
+	os.WriteFile(board, []byte(diffBoardV1), 0o644)
+	withWorkDir(t, dir, func() {
+		captureStdout(t, func() { runDiff(nil) }) // seed snapshot normally
+	})
+	snap := filepath.Join(dir, sidecarDirName, "previous.md")
+	before, err := os.ReadFile(snap)
+	if err != nil {
+		t.Fatalf("snapshot not seeded: %v", err)
+	}
+	// Write-only, no read: read fails (the case under test) while a write
+	// would still succeed — so if runDiff wrongly falls through to
+	// writeSnapshot on this error, that write succeeds and silently loses
+	// the baseline instead of failing loudly, which chmod 000 would mask by
+	// blocking the write too.
+	if err := os.Chmod(snap, 0o200); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(snap, 0o644) // restore so t.TempDir() cleanup can remove it
+
+	os.WriteFile(board, []byte(diffBoardV2), 0o644)
+	withWorkDir(t, dir, func() {
+		var code int
+		var out string
+		errOut := captureStderr(t, func() {
+			out = captureStdout(t, func() { code = runDiff(nil) })
+		})
+		if code != 0 {
+			t.Errorf("exit = %d, want 0", code)
+		}
+		if out != "" {
+			t.Errorf("printed a diff despite an unreadable snapshot: %q", out)
+		}
+		if errOut == "" {
+			t.Error("expected a stderr message for the unreadable snapshot")
+		}
+	})
+	os.Chmod(snap, 0o644)
+	after, err := os.ReadFile(snap)
+	if err != nil {
+		t.Fatalf("snapshot unreadable after restoring perms: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Error("snapshot was reseeded despite the read error — baseline lost")
+	}
+}
+
 func TestRunDiffMissingBoardSilent(t *testing.T) {
 	withWorkDir(t, t.TempDir(), func() {
 		out := captureStdout(t, func() {
