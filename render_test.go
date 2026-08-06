@@ -101,14 +101,29 @@ func TestLongBareURLNeverWraps(t *testing.T) {
 			t.Fatal(err)
 		}
 		plain := stripANSI(out)
-		urlLines := 0
+
+		// Counting lines containing "http" can't detect a wrap: a
+		// force-broken continuation starts mid-path ("com/example/...",
+		// "name/pull/123456") and contains no "http" at all, so that count
+		// stays 1 whether or not the line actually wrapped. Assert instead
+		// that the truncated display text glamour was actually asked to
+		// render — computed the same way renderMarkdown computes it —
+		// appears whole, as a contiguous substring, on exactly one line: if
+		// a regression makes the budget too generous and glamour wraps the
+		// text anyway, no single line contains it intact and this fails.
+		_, truncations := truncateBareURLs(raw, width, nil)
+		if len(truncations) != 1 {
+			t.Fatalf("width %d: expected 1 truncation, got %d: %+v", width, len(truncations), truncations)
+		}
+		display := truncations[0].display
+		onLines := 0
 		for _, line := range strings.Split(plain, "\n") {
-			if strings.Contains(line, "http") {
-				urlLines++
+			if strings.Contains(line, display) {
+				onLines++
 			}
 		}
-		if urlLines != 1 {
-			t.Errorf("width %d: URL text spread across %d lines: %q", width, urlLines, plain)
+		if onLines != 1 {
+			t.Errorf("width %d: truncated display text %q intact on %d lines, want 1:\n%s", width, display, onLines, plain)
 		}
 		for i, line := range strings.Split(out, "\n") {
 			if w := visibleWidth(line); w > width {
@@ -173,6 +188,90 @@ func TestCollidingTruncationsBothLinked(t *testing.T) {
 	}
 }
 
+// Adversarial-panel regression: prose containing a truncation's display text
+// must never steal the hyperlink. linkifyTruncations used to locate a
+// truncation by searching the whole rendered document for its display text
+// — the first place it turned up, even buried in an unrelated sentence,
+// "won" the OSC 8 target, leaving the real bare-URL line's own occurrence
+// unlinked and the full URL unrecoverable from the screen.
+//
+// A display string is deliberately sized close to the render width (that's
+// what makes truncation necessary in the first place), so wrapping prose
+// that embeds a copy of it verbatim tends to isolate that copy onto its own
+// wrapped line — at which point it's genuinely indistinguishable, by
+// content alone, from the real line, and the safe behavior is declining to
+// link EITHER (see the count-parity doc on linkifyTruncations): the decoy
+// must not get the hyperlink, and the real URL must still be fully
+// recoverable via the retry fallback. TestLinkifyTruncationsIgnoresDecoyLine
+// covers the complementary, unambiguous case: a decoy line's payload isn't
+// EXACTLY the display text (extra words on the same line), which never
+// registers as a candidate at all.
+func TestProseDecoyContainingDisplayTextDoesNotStealHyperlink(t *testing.T) {
+	const url = "https://example.com/very/long/path/segment/keeps/going/and/going/xyz123456789"
+	const width = 40
+
+	_, truncations := truncateBareURLs("- "+url+"\n", width, nil)
+	if len(truncations) != 1 {
+		t.Fatalf("expected 1 truncation, got %d: %+v", len(truncations), truncations)
+	}
+	display := truncations[0].display
+
+	raw := "decoy " + display + " here\n\n- " + url + "\n"
+	out, err := renderMarkdown(raw, width)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(out, "\x1b]8;;") {
+		t.Errorf("a link was attached despite ambiguous decoy/real pairing:\n%q", out)
+	}
+	plain := stripANSI(out)
+	joined := strings.ReplaceAll(strings.ReplaceAll(plain, "\n", ""), " ", "")
+	if !strings.Contains(joined, strings.ReplaceAll(url, " ", "")) {
+		t.Errorf("real URL did not survive the fallback retry, full text not reconstructible:\n%s", plain)
+	}
+}
+
+// Adversarial-panel regression, and the end-to-end pin for the
+// unresolved→retry fallback path: a literal line whose text is EXACTLY a
+// truncation's display string — e.g. an agent pasting previously-truncated
+// text copied back from the pane — must not be mistaken for that
+// truncation's own line. There are then two candidate lines with that exact
+// payload but only one real truncation, so the pairing is ambiguous; the
+// truncation must come back unresolved and the retry must render the real
+// URL fully, untruncated, plain (no ellipsis, no OSC 8) — never linked to
+// the wrong place, and never left as inert truncated text with no link at
+// all.
+func TestPastedBackTruncatedTextDoesNotStealHyperlink(t *testing.T) {
+	const url = "https://example.com/very/long/path/segment/keeps/going/and/going/xyz123456789"
+	const width = 40
+
+	_, truncations := truncateBareURLs("- "+url+"\n", width, nil)
+	if len(truncations) != 1 {
+		t.Fatalf("expected 1 truncation, got %d: %+v", len(truncations), truncations)
+	}
+	display := truncations[0].display
+
+	// The pasted line is itself bare-URL-shaped (bareURLLineRE's \S+ matches
+	// the ellipsis character too) and already fits the budget, so
+	// truncateBareURLs leaves it exactly as written — a second, unrelated
+	// line with the identical rendered payload.
+	raw := "- " + display + "\n- " + url + "\n"
+	out, err := renderMarkdown(raw, width)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(out, "\x1b]8;;") {
+		t.Errorf("ambiguous pairing should resolve to NO hyperlink at all, found one:\n%q", out)
+	}
+	plain := stripANSI(out)
+	joined := strings.ReplaceAll(strings.ReplaceAll(plain, "\n", ""), " ", "")
+	if !strings.Contains(joined, strings.ReplaceAll(url, " ", "")) {
+		t.Errorf("real URL did not survive the fallback retry, full text not reconstructible:\n%s", plain)
+	}
+}
+
 // Bare URLs inside fenced code blocks are verbatim content, not board links
 // — this fix must not truncate them or wrap them in a hyperlink, silently
 // altering what the fence is supposed to reproduce exactly. (Glamour's own
@@ -217,14 +316,23 @@ func TestNestedBareURLNeverWraps(t *testing.T) {
 		t.Fatal(err)
 	}
 	plain := stripANSI(out)
-	urlLines := 0
+
+	// See TestLongBareURLNeverWraps: counting lines containing "http" can't
+	// detect a wrap (a continuation starts mid-path); assert the actual
+	// truncated display text is intact on exactly one line instead.
+	_, truncations := truncateBareURLs(raw, width, nil)
+	if len(truncations) != 1 {
+		t.Fatalf("expected 1 truncation, got %d: %+v", len(truncations), truncations)
+	}
+	display := truncations[0].display
+	onLines := 0
 	for _, line := range strings.Split(plain, "\n") {
-		if strings.Contains(line, "http") {
-			urlLines++
+		if strings.Contains(line, display) {
+			onLines++
 		}
 	}
-	if urlLines != 1 {
-		t.Errorf("URL text spread across %d lines: %q", urlLines, plain)
+	if onLines != 1 {
+		t.Errorf("truncated display text %q intact on %d lines, want 1:\n%s", display, onLines, plain)
 	}
 	for i, line := range strings.Split(out, "\n") {
 		if w := visibleWidth(line); w > width {

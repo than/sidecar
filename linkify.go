@@ -43,13 +43,34 @@ const osc8Close = "\x1b]8;;\x07"
 type urlTruncation struct {
 	display string // the ellipsized text that replaced the URL in raw markdown
 	full    string // the original, untruncated URL
+	line    int    // index into rawIn's line split this truncation came from
 }
 
-// fenceRE matches a fenced-code-block delimiter line (``` or ~~~, any
-// fence-length/info-string suffix) and captures which character it's built
-// from, so a run of ``` can't be closed early by an unrelated ~~~ line (or
-// vice versa) — same rule CommonMark itself uses.
-var fenceRE = regexp.MustCompile("^\\s*(`{3,}|~{3,})")
+// fenceRE matches a fenced-code-block delimiter line (``` or ~~~, at most 3
+// leading spaces — CommonMark's own limit before a fence marker is instead
+// content or an indented code block) and captures the run of fence
+// characters, so both its character and its length can be checked against
+// the opener: CommonMark closes a fence only on a line of the SAME
+// character, at least as LONG as the opener.
+var fenceRE = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})")
+
+// leadingColumns returns the tab-expanded column width of line's leading
+// run of spaces and tabs — CommonMark expands a tab to the next multiple of
+// 4 when computing block-structure indentation, not to a single column.
+func leadingColumns(line string) int {
+	col := 0
+	for _, r := range line {
+		switch r {
+		case ' ':
+			col++
+		case '\t':
+			col += 4 - col%4
+		default:
+			return col
+		}
+	}
+	return col
+}
 
 // osc8Target returns the string safe to embed as the target of an OSC 8
 // escape for url, and whether url can be linked at all.
@@ -91,33 +112,62 @@ func osc8Target(url string) (target string, ok bool) {
 }
 
 // truncateBareURLs rewrites raw markdown so that any bare-URL-only line
-// wider than width is shortened to fit, with a trailing ellipsis. Lines that
-// already fit, or that fall inside a fenced code block (verbatim content —
-// truncating it would silently alter what the fence reproduces), are left
-// untouched. skip holds full URLs to leave untruncated regardless of width —
-// used by renderMarkdown to retry a line whose truncated form couldn't be
-// relocated after rendering (see renderMarkdown for why).
+// wider than width is shortened to fit, with a trailing ellipsis.
+//
+// Left untouched, on top of lines that already fit:
+//
+//   - Fenced code blocks (``` or ~~~ — see fenceRE): verbatim content, and
+//     the fence is only recognized as SUCH when it's the right character and
+//     at least as long as its opener, matching CommonMark's own closing
+//     rule — a shorter or differently-charactered run of backticks/tildes
+//     inside the block is just content, not a closer.
+//
+//   - Indented code blocks: any line whose leading whitespace is 4+
+//     tab-expanded columns is verbatim per CommonMark (this also covers a
+//     single leading tab, which expands to a full 4-column tab stop on its
+//     own — so a tab-indented "nested bullet" is never a truncation
+//     candidate to begin with, rather than being budgeted with a fractional
+//     tab-to-column guess that could under-count it).
+//
+// skip holds RAW LINE INDICES (not URLs — see renderMarkdown for why) to
+// leave untruncated regardless of width, used to retry a specific line
+// whose truncated form couldn't be relocated after rendering.
 //
 // Returns the rewritten markdown and the list of shortenings made, so the
 // caller can re-attach the full URL as an OSC 8 target after rendering.
-func truncateBareURLs(raw string, width int, skip map[string]bool) (string, []urlTruncation) {
+func truncateBareURLs(raw string, width int, skip map[int]bool) (string, []urlTruncation) {
 	lines := strings.Split(raw, "\n")
 	var truncations []urlTruncation
 	fenceChar := byte(0) // 0 when not inside a fence; '`' or '~' while inside one
+	fenceLen := 0        // length of the run that opened the current fence
 	for i, line := range lines {
-		if m := fenceRE.FindStringSubmatch(line); m != nil {
-			c := m[1][0]
-			if fenceChar == 0 {
-				fenceChar = c
-			} else if c == fenceChar {
-				fenceChar = 0
+		indentCols := leadingColumns(line)
+
+		if indentCols < 4 {
+			if m := fenceRE.FindStringSubmatch(line); m != nil {
+				marker := m[1]
+				switch {
+				case fenceChar == 0:
+					fenceChar, fenceLen = marker[0], len(marker)
+				case marker[0] == fenceChar && len(marker) >= fenceLen:
+					fenceChar, fenceLen = 0, 0
+				// Different character, or too short to close: this is
+				// fence CONTENT (e.g. a ``` example shown inside a ````
+				// block), not a delimiter — state doesn't change.
+				default:
+				}
+				continue
 			}
-			// A fence line of the OTHER character, while already inside a
-			// fence, is just content (e.g. a ~~~ example inside a ``` block)
-			// — state doesn't change.
+		}
+		// A 4+-column-indented fence marker isn't a fence at all per
+		// CommonMark — it falls through to the indentCols>=4 check below
+		// and is treated as (or stays) verbatim content instead.
+
+		if fenceChar != 0 || indentCols >= 4 {
 			continue
 		}
-		if fenceChar != 0 {
+
+		if skip[i] {
 			continue
 		}
 		m := bareURLLineRE.FindStringSubmatch(line)
@@ -125,22 +175,22 @@ func truncateBareURLs(raw string, width int, skip map[string]bool) (string, []ur
 			continue
 		}
 		prefix, url := m[1], m[2]
-		if skip[url] {
-			continue
-		}
 		// Reserve the columns glamour will spend on indent + bullet: any
 		// leading whitespace in the source (one level of nesting per 2
 		// cols, matching styleConfig's List.LevelIndent) plus "• " for the
-		// marker itself. A plain, unbulleted line reserves nothing.
+		// marker itself. A plain, unbulleted line reserves nothing. Every
+		// leading-whitespace byte counted here is a space — a tab would
+		// already have hit the indentCols>=4 skip above — so a plain byte
+		// count is an exact column count, no tab-stop math needed.
 		reserve := 0
 		if prefix != "" {
-			leadingWS := len(prefix) - len(strings.TrimLeft(prefix, " \t"))
+			leadingWS := len(prefix) - len(strings.TrimLeft(prefix, " "))
 			reserve = leadingWS + 2
 		}
 		budget := width - reserve
-		// Nesting can push reserve arbitrarily high (unlike the old
-		// hard-coded reserve of 2), so this floor stays reachable: without
-		// it, deeply nested lines could get a negative/zero budget.
+		// Nesting can push reserve arbitrarily high (unlike a hard-coded
+		// small reserve), so this floor stays reachable: without it, deeply
+		// nested lines could get a negative/zero budget.
 		if budget < 8 {
 			budget = 8
 		}
@@ -162,7 +212,7 @@ func truncateBareURLs(raw string, width int, skip map[string]bool) (string, []ur
 		ellipsisWidth := runewidth.RuneWidth('…')
 		display := cutToCellWidth(url, budget-ellipsisWidth) + "…"
 		lines[i] = prefix + display
-		truncations = append(truncations, urlTruncation{display: display, full: url})
+		truncations = append(truncations, urlTruncation{display: display, full: url, line: i})
 	}
 	return strings.Join(lines, "\n"), truncations
 }
@@ -187,61 +237,108 @@ func cutToCellWidth(s string, maxCells int) string {
 	return b.String()
 }
 
-// linkifyTruncations wraps each truncation's display text, wherever it
-// landed in the rendered+tidied output, in a colorLink-styled OSC 8
-// hyperlink pointing at the full URL. The visible text is unchanged (still
-// the ellipsized form); only a terminal that understands OSC 8 sees the full
-// target, so clicking anywhere on the truncated text still opens it.
+// linkifyTruncations wraps each truncation's display text, on the rendered
+// line it belongs to, in a colorLink-styled OSC 8 hyperlink pointing at the
+// full URL. The visible text is unchanged (still the ellipsized form); only
+// a terminal that understands OSC 8 sees the full target, so clicking
+// anywhere on the truncated text still opens it.
 //
-// Truncations are processed in document order with a cursor that only ever
-// moves forward: each search starts just past the previous replacement, not
-// from offset 0. Two truncations can legitimately share identical display
-// text (same prefix, budget cuts them at the same rune) — searching from 0
-// every time would keep re-finding the first occurrence, nesting every
-// later truncation's hyperlink inside the first one's and leaving the rest
-// of the document's occurrences unlinked.
+// Truncations are anchored to a LINE, not a substring search over the whole
+// rendered document. A line is a candidate for truncation t only if its
+// entire visible payload — stripped of ANSI, then of the bullet/indent
+// prefix glamour renders ("• ", possibly preceded by nesting spaces) — is
+// EXACTLY t.display: nothing before it, nothing after. That rules out
+// matching a display string that merely appears as a SUBSTRING of some
+// other line (prose mentioning it, a decoy, ...), which a plain
+// document-wide substring search can't tell apart from the real line.
 //
-// Any truncation whose display text can't be located (should only happen if
-// the reserve estimate in truncateBareURLs under-budgeted and glamour wrapped
-// it after all) is returned unresolved rather than silently dropped, so the
-// caller can fall back to rendering that URL untruncated.
-//
-// A truncation whose full URL fails osc8Target (a C0/DEL control byte) is
-// skipped outright — not reported as unresolved, since nothing needs a
-// fallback retry: the visible, width-correct truncated text is already in
-// place and stays exactly as rendered, just without a hyperlink wrapped
-// around it. The cursor still has to advance past that occurrence, though:
-// leaving it stale would let a LATER truncation whose display text happens
-// to collide with this one (see the cursor doc above) get matched against
-// this skipped truncation's own, still-plain occurrence instead of its own
-// — hyperlinking the wrong line, the exact failure the forward-only cursor
-// exists to prevent.
+// Truncations sharing an identical display string (a legitimate collision:
+// same URL prefix, same budget cut) are paired with their candidate lines
+// by POSITION, in document order on both sides — rendering preserves
+// source order, so the i-th truncation with a given display corresponds to
+// the i-th rendered line with that exact payload. If the two counts for a
+// display don't match — a decoy or pasted-back line inflating the
+// candidates, or a wrap swallowing one of the truncations and shrinking
+// them — there's no way to pair them without guessing, so EVERY truncation
+// sharing that display is reported unresolved instead: the caller's retry
+// re-renders those specific lines untruncated rather than risk linking (or
+// leaving unlinked) the wrong one.
 func linkifyTruncations(rendered string, truncations []urlTruncation) (string, []urlTruncation) {
-	var unresolved []urlTruncation
-	cursor := 0
-	for _, t := range truncations {
-		start, end, ok := findPlainRange(rendered[cursor:], t.display)
-		if !ok {
-			if _, safe := osc8Target(t.full); safe {
-				unresolved = append(unresolved, t)
-			}
-			continue
-		}
-		start += cursor
-		end += cursor
-		target, safe := osc8Target(t.full)
-		if !safe {
-			cursor = end
-			continue
-		}
-		r, g, b := hexToRGB(colorLink)
-		styled := osc8Open(target) +
-			"\x1b[4;38;2;" + strconv.Itoa(r) + ";" + strconv.Itoa(g) + ";" + strconv.Itoa(b) + "m" +
-			t.display + "\x1b[0m" + osc8Close
-		rendered = rendered[:start] + styled + rendered[end:]
-		cursor = start + len(styled)
+	if len(truncations) == 0 {
+		return rendered, nil
 	}
-	return rendered, unresolved
+
+	lines := strings.Split(rendered, "\n")
+	candidatesByPayload := map[string][]int{}
+	for i, ln := range lines {
+		if p := lineURLPayload(ln); p != "" {
+			candidatesByPayload[p] = append(candidatesByPayload[p], i)
+		}
+	}
+
+	type group struct {
+		truncs []urlTruncation
+	}
+	groups := map[string]*group{}
+	var order []string
+	for _, t := range truncations {
+		g, ok := groups[t.display]
+		if !ok {
+			g = &group{}
+			groups[t.display] = g
+			order = append(order, t.display)
+		}
+		g.truncs = append(g.truncs, t)
+	}
+
+	var unresolved []urlTruncation
+	replacement := make(map[int]string, len(truncations))
+	for _, display := range order {
+		g := groups[display]
+		candidates := candidatesByPayload[display]
+		if len(candidates) != len(g.truncs) {
+			unresolved = append(unresolved, g.truncs...)
+			continue
+		}
+		for i, t := range g.truncs {
+			lineIdx := candidates[i]
+			target, safe := osc8Target(t.full)
+			if !safe {
+				continue // leave this line's plain truncated text exactly as rendered
+			}
+			start, end, ok := findPlainRange(lines[lineIdx], t.display)
+			if !ok {
+				// Should be unreachable: candidates were selected because
+				// their whole payload equals t.display, so it must be
+				// findable within that same line. Treat as unresolved
+				// rather than silently leaving it unlinked.
+				unresolved = append(unresolved, t)
+				continue
+			}
+			r, g8, b := hexToRGB(colorLink)
+			styled := osc8Open(target) +
+				"\x1b[4;38;2;" + strconv.Itoa(r) + ";" + strconv.Itoa(g8) + ";" + strconv.Itoa(b) + "m" +
+				t.display + "\x1b[0m" + osc8Close
+			replacement[lineIdx] = lines[lineIdx][:start] + styled + lines[lineIdx][end:]
+		}
+	}
+	for i, ln := range replacement {
+		lines[i] = ln
+	}
+	return strings.Join(lines, "\n"), unresolved
+}
+
+// lineURLPayload returns line's entire visible content with ANSI stripped
+// and, if present, exactly one glamour item bullet ("• ", possibly preceded
+// by nesting spaces) trimmed off the front — i.e. what a bare-URL-only
+// source line renders as, minus the decoration truncateBareURLs already
+// accounted for in its reserve. Returns "" for a blank line (never a valid
+// truncation match).
+func lineURLPayload(line string) string {
+	s := strings.TrimRight(stripANSI(line), " ")
+	s = strings.TrimLeft(s, " ")
+	s = strings.TrimPrefix(s, "• ")
+	return s
 }
 
 // findPlainRange locates the byte range within s — which may be laced with

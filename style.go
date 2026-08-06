@@ -147,18 +147,25 @@ func renderMarkdown(rawIn string, width int) (string, error) {
 		return out, nil
 	}
 
-	// A truncation's display text couldn't be found post-render — the
-	// reserve estimate under-budgeted (e.g. an indent shape truncateBareURLs
-	// didn't anticipate) and glamour force-wrapped it after all. Truncated,
-	// inert text with no hyperlink would be worse than the pre-fix bug (at
+	// A truncation's display text couldn't be paired to exactly one rendered
+	// line — either the reserve estimate under-budgeted and glamour
+	// force-wrapped it after all, or its display text collided ambiguously
+	// with another line (decoy prose, a pasted-back truncated URL, ...) and
+	// there was no safe way to tell which line was which. Truncated, inert
+	// (or worse, MISlinked) text would be worse than the pre-fix bug (at
 	// least the old broken fragments were plain URL text a terminal's own
 	// regex might partially match); fall back to rendering those specific
-	// URLs untruncated instead — same behavior as before this fix, only for
-	// the lines that need it — rather than risk a second miss compounding
+	// lines untruncated instead — same behavior as before this fix, only for
+	// the lines that need it — rather than risk a second guess compounding
 	// the first.
-	skip := make(map[string]bool, len(unresolved))
+	//
+	// skip is keyed by RAW LINE INDEX, not by URL: two bare-URL lines can
+	// share the same URL text, and only one of them may need the fallback —
+	// keying by URL would have untruncated (and thus regressed) the other,
+	// healthy line too.
+	skip := make(map[int]bool, len(unresolved))
 	for _, t := range unresolved {
-		skip[t.full] = true
+		skip[t.line] = true
 	}
 	raw, truncations = truncateBareURLs(rawIn, width, skip)
 	out, err = glamourRender(raw, width)

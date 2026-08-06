@@ -72,15 +72,38 @@ func TestTruncateBareURLsFenceToggleTildeAndBacktick(t *testing.T) {
 	}
 }
 
+// skip is keyed by raw line index, not URL — a duplicate URL on another
+// line must not be affected. See TestPastedBackTruncatedTextDoesNotStealHyperlink
+// (render_test.go) for the end-to-end version of the retry path this feeds.
 func TestTruncateBareURLsSkipsListedURLs(t *testing.T) {
 	url := "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
 	raw := "- " + url + "\n"
-	out, truncations := truncateBareURLs(raw, 24, map[string]bool{url: true})
+	out, truncations := truncateBareURLs(raw, 24, map[int]bool{0: true})
 	if out != raw {
 		t.Errorf("skipped URL rewritten: %q", out)
 	}
 	if len(truncations) != 0 {
 		t.Errorf("unexpected truncations for skipped URL: %+v", truncations)
+	}
+}
+
+// The same URL appearing on two different lines must be skippable
+// independently: skipping line 0 (as renderMarkdown's retry does for a
+// specific unresolved truncation) must not also untruncate line 2's
+// identical URL. Keying skip by the URL string instead of the line index
+// would regress a healthy, already-correctly-linked line back to
+// force-wrapped, hyperlink-less output every time its retry-triggering
+// twin needed a fallback.
+func TestTruncateBareURLsSkipIsPerLineNotPerDuplicateURL(t *testing.T) {
+	url := "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
+	raw := "- " + url + "\n- " + url + "\n"
+
+	_, truncations := truncateBareURLs(raw, 24, map[int]bool{0: true})
+	if len(truncations) != 1 {
+		t.Fatalf("expected exactly 1 truncation (line 2 only), got %d: %+v", len(truncations), truncations)
+	}
+	if truncations[0].line != 1 {
+		t.Errorf("expected the surviving truncation on line index 1, got line %d", truncations[0].line)
 	}
 }
 
@@ -111,6 +134,114 @@ func TestTruncateBareURLsFenceCharMustMatch(t *testing.T) {
 	_, truncations := truncateBareURLs(raw, 24, nil)
 	if len(truncations) != 0 {
 		t.Errorf("URL inside ``` block (after an unrelated ~~~ line) was truncated: %+v", truncations)
+	}
+}
+
+// CommonMark closes a fence only on a line of the same character AND AT
+// LEAST AS LONG as the opener. A shorter run of the same character (a ```
+// inside a ````-delimited block — the standard way to show fenced-markdown
+// examples verbatim) is content, not a closer; the block must still be
+// considered open past it.
+func TestTruncateBareURLsFenceCloserMustBeAtLeastAsLongAsOpener(t *testing.T) {
+	url := "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
+	raw := "````\n```\n" + url + "\n```\n````\n"
+	_, truncations := truncateBareURLs(raw, 24, nil)
+	if len(truncations) != 0 {
+		t.Errorf("URL inside a ````-delimited block (after a shorter ``` line) was truncated: %+v", truncations)
+	}
+}
+
+// A fence marker indented 4+ columns isn't a fence delimiter at all per
+// CommonMark (it's either an indented code block itself, or content within
+// an already-open fence) — it must not flip fence-tracking state and
+// silently disable truncation for the rest of the document.
+func TestTruncateBareURLsIndentedFenceMarkerIgnored(t *testing.T) {
+	url := "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
+	raw := "    ```\n\n" + url + "\n"
+	_, truncations := truncateBareURLs(raw, 24, nil)
+	if len(truncations) != 1 {
+		t.Errorf("indented ``` was treated as a fence delimiter; URL below it wasn't truncated: %+v", truncations)
+	}
+}
+
+// A line indented 4+ tab-expanded columns is a CommonMark indented code
+// block — verbatim content, exactly like a fenced block, and must not be
+// truncated or later wrapped in an OSC 8 hyperlink (which would inject
+// styling/escape bytes into what's supposed to be an exact reproduction).
+func TestTruncateBareURLsSkipsIndentedCodeBlock(t *testing.T) {
+	url := "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
+	raw := "para\n\n    - " + url + "\n\npara2\n"
+	out, truncations := truncateBareURLs(raw, 40, nil)
+	if out != raw {
+		t.Errorf("indented code block rewritten: %q", out)
+	}
+	if len(truncations) != 0 {
+		t.Errorf("unexpected truncations inside indented code block: %+v", truncations)
+	}
+}
+
+// A single leading tab expands to a full 4-column tab stop on its own
+// (CommonMark tab stops are every 4 columns), which alone meets the
+// indented-code-block threshold — so a tab-prefixed bare-URL line (e.g. a
+// tab-nested list item) is excluded from truncation entirely, the same as
+// any other 4+-column-indented line, rather than trying to budget a
+// fractional reserve for a tab that might expand to anywhere from 1 to 4
+// columns depending on what precedes it.
+func TestTruncateBareURLsSkipsTabIndentedLines(t *testing.T) {
+	url := "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
+	raw := "- top\n\t- " + url + "\n"
+	_, truncations := truncateBareURLs(raw, 40, nil)
+	if len(truncations) != 0 {
+		t.Errorf("tab-indented URL was truncated: %+v", truncations)
+	}
+}
+
+// A decoy line whose payload is NOT exactly the display text — extra words
+// on the same rendered line — must never be considered a candidate at all,
+// regardless of whether it contains the display text as a substring. This
+// is the unambiguous companion to
+// TestProseDecoyContainingDisplayTextDoesNotStealHyperlink (render_test.go),
+// which covers the case where wrapping isolates a decoy onto its own
+// whole-line-matching line — genuinely ambiguous, and correctly left
+// unresolved rather than guessed.
+func TestLinkifyTruncationsIgnoresDecoyLine(t *testing.T) {
+	styled := func(text string) string { return "\x1b[38;2;1;2;3m" + text + "\x1b[0m" }
+	const display = "https://example.com/very/long/path/segm…"
+	const full = "https://example.com/very/long/path/segment/real"
+
+	rendered := styled("decoy "+display+" here") + "\n" + styled(display)
+	truncations := []urlTruncation{{display: display, full: full, line: 1}}
+
+	out, unresolved := linkifyTruncations(rendered, truncations)
+	if len(unresolved) != 0 {
+		t.Fatalf("unexpected unresolved: %+v", unresolved)
+	}
+	lines := strings.Split(out, "\n")
+	if strings.Contains(lines[0], "\x1b]8;;") {
+		t.Errorf("decoy line (payload != display) was hyperlinked: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "\x1b]8;;"+full) {
+		t.Errorf("real line's target missing: %q", lines[1])
+	}
+}
+
+// Two candidate lines for one truncation's display (an unrelated decoy line
+// whose ENTIRE payload happens to equal it, plus the real line) is
+// ambiguous — 2 candidates, 1 truncation — and must come back unresolved
+// rather than guessing which is which.
+func TestLinkifyTruncationsAmbiguousCountUnresolved(t *testing.T) {
+	styled := func(text string) string { return "\x1b[38;2;1;2;3m" + text + "\x1b[0m" }
+	const display = "same"
+
+	rendered := styled(display) + "\n" + styled(display)
+	truncations := []urlTruncation{{display: display, full: "https://example.test/real", line: 1}}
+
+	out, unresolved := linkifyTruncations(rendered, truncations)
+	if len(unresolved) != 1 {
+		t.Fatalf("expected 1 unresolved (ambiguous count), got %d: %+v", len(unresolved), unresolved)
+	}
+	if strings.Contains(out, "\x1b]8;;") {
+		t.Errorf("ambiguous pairing should not have linked anything: %q", out)
 	}
 }
 
@@ -217,11 +348,11 @@ func TestTruncateBareURLsCutsWideRunesByCellWidth(t *testing.T) {
 }
 
 // An unsafe (control-byte) truncation followed by a SAFE truncation that
-// collides on identical display text: the unsafe one is skipped for
-// hyperlinking, but its occurrence must still be consumed by the cursor —
-// otherwise the safe truncation's search starts from offset 0 again, finds
-// the FIRST (unsafe, still-plain) occurrence, and hyperlinks the wrong line.
-func TestLinkifyTruncationsUnsafeSkipAdvancesCursor(t *testing.T) {
+// collides on identical display text: candidate lines and truncations still
+// pair up 1:1 by position (2 lines with that exact payload, 2 truncations
+// sharing that display), so the unsafe one is skipped for hyperlinking on
+// its own line without disturbing the safe one's pairing with ITS line.
+func TestLinkifyTruncationsUnsafeSkipDoesNotDisturbPairing(t *testing.T) {
 	styled := func(text string) string {
 		return "\x1b[38;2;1;2;3m" + text + "\x1b[0m"
 	}
