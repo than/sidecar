@@ -54,11 +54,15 @@ func semanticDiff(old, new Board) []string {
 		}
 		o := match
 		o.matched, n.matched = true, true
+		// Compare tags, not full labels: renaming a section's heading text
+		// (e.g. "🚧 In progress" → "🚧 Working") keeps every item's tag the
+		// same, so it must not report every item as "moved" to itself.
+		ot, nt := sectionTag(o.section), sectionTag(n.section)
 		switch {
-		case o.section != n.section:
-			moved = append(moved, fmt.Sprintf("moved %s→%s: %q", sectionTag(o.section), sectionTag(n.section), title(n.item.Key)))
+		case ot != nt:
+			moved = append(moved, fmt.Sprintf("moved %s→%s: %q", ot, nt, title(n.item.Key)))
 		case o.item.Raw != n.item.Raw:
-			edited = append(edited, fmt.Sprintf("edited %s: %q", sectionTag(n.section), title(n.item.Key)))
+			edited = append(edited, fmt.Sprintf("edited %s: %q", nt, title(n.item.Key)))
 		}
 	}
 

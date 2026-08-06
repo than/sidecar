@@ -25,6 +25,19 @@ func TestSemanticDiffMoved(t *testing.T) {
 	}
 }
 
+// T2: renaming a section's heading text while keeping its emoji tag must not
+// report every unchanged item under it as "moved" to itself.
+func TestSemanticDiffSectionHeadingRenameNotMoved(t *testing.T) {
+	old := board(t, "## 🚧 In progress\n\n- Ship v2\n- Fix the parser\n")
+	new := board(t, "## 🚧 Working\n\n- Ship v2\n- Fix the parser\n")
+	out := semanticDiff(old, new)
+	for _, line := range out {
+		if strings.HasPrefix(line, "moved ") {
+			t.Errorf("unexpected moved line for a same-tag section rename: %q\nfull output: %q", line, out)
+		}
+	}
+}
+
 func TestSemanticDiffAddedRemoved(t *testing.T) {
 	old := board(t, "## 🧠 Needs action\n\n- Old idea\n")
 	new := board(t, "## 🧠 Needs action\n\n- Fresh idea\n")
