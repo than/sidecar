@@ -335,6 +335,61 @@ func TestExcludeSidecarDirPrintsConfirmation(t *testing.T) {
 	}
 }
 
+// S1: a custom board resident inside .sidecar/ (e.g. .sidecar/notes.md) must
+// route to the automatic .sidecar/-dir exclude, never the custom-path
+// prompt — reachable directly via offerGitExclude (e.g. from offerCreate in
+// viewer mode), not just through runInit's own top-level guard.
+func TestOfferGitExcludeSidecarResidentPathAutomatic(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	sidecarDir := filepath.Join(dir, sidecarDirName)
+	os.MkdirAll(sidecarDir, 0o755)
+	target := filepath.Join(sidecarDir, "notes.md")
+	os.WriteFile(target, []byte("# notes\n"), 0o644)
+
+	out := withStdinCapture(t, "", func() { offerGitExclude(target) })
+	if strings.Contains(out, "Keep") && strings.Contains(out, "out of git?") {
+		t.Errorf("prompted for a .sidecar/-resident path:\n%s", out)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if !strings.Contains(string(data), sidecarDirName+"/") {
+		t.Errorf("info/exclude missing %s/: %q", sidecarDirName, data)
+	}
+	if strings.Contains(string(data), "notes.md") {
+		t.Errorf("info/exclude should hold the whole %s/ dir, not the file itself: %q", sidecarDirName, data)
+	}
+}
+
+// S1: same guard for the non-interactive (--yes) path.
+func TestGitExcludeDefaultSidecarResidentPathAutomatic(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	sidecarDir := filepath.Join(dir, sidecarDirName)
+	os.MkdirAll(sidecarDir, 0o755)
+	target := filepath.Join(sidecarDir, "notes.md")
+	os.WriteFile(target, []byte("# notes\n"), 0o644)
+
+	gitExcludeDefault(target)
+	data, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if !strings.Contains(string(data), sidecarDirName+"/") {
+		t.Errorf("info/exclude missing %s/: %q", sidecarDirName, data)
+	}
+	if strings.Contains(string(data), "notes.md") {
+		t.Errorf("info/exclude should hold the whole %s/ dir, not the file itself: %q", sidecarDirName, data)
+	}
+}
+
+// withStdinCapture combines withStdin and captureStdout: runs f with stdin
+// set to input and returns whatever f printed.
+func withStdinCapture(t *testing.T, input string, f func()) string {
+	t.Helper()
+	var out string
+	withStdin(t, input, func() {
+		out = captureStdout(t, f)
+	})
+	return out
+}
+
 // withStdin redirects os.Stdin to input for the duration of f, restoring it
 // afterward.
 func withStdin(t *testing.T, input string, f func()) {

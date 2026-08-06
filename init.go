@@ -561,6 +561,14 @@ func excludeSidecarDir(dir string) {
 // shared exclude file.
 func offerGitExclude(fileAbs string) {
 	dir := filepath.Dir(fileAbs)
+	if filepath.Base(dir) == sidecarDirName {
+		// A board resident inside .sidecar/ (custom name or not) belongs to
+		// the same automatic whole-dir exclude as the default board — never
+		// the custom-path prompt, which would exclude just the one file and
+		// leave the rest of .sidecar/ (including the snapshot) untracked.
+		excludeSidecarDir(repoRoot(dir))
+		return
+	}
 	if out, ok := git(dir, "rev-parse", "--is-inside-work-tree"); !ok || out != "true" {
 		return // not a git work tree — nothing to exclude
 	}
@@ -604,6 +612,11 @@ Choice [E/g/n]: `, rel)
 // TTY state. No-op outside a work tree or when the file is already ignored.
 func gitExcludeDefault(fileAbs string) {
 	dir := filepath.Dir(fileAbs)
+	if filepath.Base(dir) == sidecarDirName {
+		// Same automatic whole-dir exclude as offerGitExclude — see there.
+		excludeSidecarDir(repoRoot(dir))
+		return
+	}
 	if out, ok := git(dir, "rev-parse", "--is-inside-work-tree"); !ok || out != "true" {
 		return // not a git work tree — nothing to exclude
 	}
