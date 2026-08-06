@@ -90,6 +90,44 @@ func TestParseBoardSingleLineCommentSkipped(t *testing.T) {
 	}
 }
 
+// P5: a fenced code block containing lines that look like a heading or a
+// bullet must not fabricate a section or item — fence-interior lines stay
+// continuation content of whatever item is open when the fence starts.
+func TestParseBoardFencedCodeBlockNotParsedAsMarkup(t *testing.T) {
+	raw := "## 🧠 Needs action\n\n- Review PR #7\n```\n## fake\n- fake\n```\n"
+	b, ok := parseBoard(raw)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if len(b.Sections) != 1 {
+		t.Fatalf("sections = %d, want 1 (fence must not fabricate a section)", len(b.Sections))
+	}
+	if len(b.Sections[0].Items) != 1 {
+		t.Fatalf("items = %d, want 1 (fence must not fabricate an item)", len(b.Sections[0].Items))
+	}
+	want := "- Review PR #7\n```\n## fake\n- fake\n```"
+	if b.Sections[0].Items[0].Raw != want {
+		t.Errorf("raw = %q, want %q (fence content as continuation)", b.Sections[0].Items[0].Raw, want)
+	}
+}
+
+// P5: a fence with no item open (e.g. between items, after a blank line)
+// still must not fabricate a section or item, even though there's nowhere
+// for its content to attach.
+func TestParseBoardFencedCodeBlockWithNoOpenItem(t *testing.T) {
+	raw := "## 🧠 Needs action\n\n- Review PR #7\n\n```\n## fake\n- fake\n```\n\n- Ship v2\n"
+	b, ok := parseBoard(raw)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if len(b.Sections) != 1 {
+		t.Fatalf("sections = %d, want 1", len(b.Sections))
+	}
+	if len(b.Sections[0].Items) != 2 {
+		t.Fatalf("items = %d, want 2 (Review PR #7, Ship v2)", len(b.Sections[0].Items))
+	}
+}
+
 func TestNormalizeItem(t *testing.T) {
 	if got := normalizeItem("-   Fix   the  parser  "); got != "Fix the parser" {
 		t.Errorf("got %q", got)

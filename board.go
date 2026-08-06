@@ -33,6 +33,7 @@ func parseBoard(raw string) (Board, bool) {
 	var cur *BoardSection
 	var item *BoardItem
 	inComment := false
+	inFence := false
 	for _, ln := range strings.Split(raw, "\n") {
 		trimmed := strings.TrimSpace(ln)
 		if inComment {
@@ -47,6 +48,25 @@ func parseBoard(raw string) (Board, bool) {
 			// its text doesn't attach to the preceding item's Raw.
 			if !strings.Contains(trimmed, "-->") {
 				inComment = true
+			}
+			continue
+		}
+		// A fenced code block's interior can contain lines that look like a
+		// heading or a bullet ("## fake", "- fake"); those must never be
+		// parsed as markup. Toggle on the fence delimiters themselves and
+		// skip section/item detection entirely while inside one — but a
+		// fence line still belongs to whatever item is currently open, same
+		// as any other continuation line.
+		if strings.HasPrefix(trimmed, "```") {
+			inFence = !inFence
+			if item != nil {
+				item.Raw += "\n" + ln
+			}
+			continue
+		}
+		if inFence {
+			if item != nil {
+				item.Raw += "\n" + ln
 			}
 			continue
 		}
