@@ -138,7 +138,14 @@ func truncateBareURLs(raw string, width int, skip map[string]bool) (string, []ur
 		if visibleWidth(url) <= budget {
 			continue // fits as-is; let glamour's existing autolink path handle it
 		}
-		display := cutToCellWidth(url, budget-1) + "…" // -1: room for the ellipsis
+		// The ellipsis itself costs cells too — U+2026 is East Asian
+		// Ambiguous, so under an EastAsianWidth/CJK locale (RUNEWIDTH_EASTASIAN,
+		// or just a wide terminal font convention) go-runewidth measures it
+		// as 2 cells, not 1. Hardcoding "-1" here would leave the assembled
+		// display text one cell over budget in exactly that locale — wrapping
+		// anyway and falling back to the pre-#15-fix bug for every long URL.
+		ellipsisWidth := runewidth.RuneWidth('…')
+		display := cutToCellWidth(url, budget-ellipsisWidth) + "…"
 		lines[i] = prefix + display
 		truncations = append(truncations, urlTruncation{display: display, full: url})
 	}
@@ -187,21 +194,29 @@ func cutToCellWidth(s string, maxCells int) string {
 // A truncation whose full URL fails osc8Safe is skipped outright — not
 // reported as unresolved, since nothing needs a fallback retry: the visible,
 // width-correct truncated text is already in place and stays exactly as
-// rendered, just without a hyperlink wrapped around it.
+// rendered, just without a hyperlink wrapped around it. The cursor still has
+// to advance past that occurrence, though: leaving it stale would let a
+// LATER truncation whose display text happens to collide with this one (see
+// the cursor doc above) get matched against this unsafe truncation's own,
+// still-plain occurrence instead of its own — hyperlinking the wrong line,
+// the exact failure the forward-only cursor exists to prevent.
 func linkifyTruncations(rendered string, truncations []urlTruncation) (string, []urlTruncation) {
 	var unresolved []urlTruncation
 	cursor := 0
 	for _, t := range truncations {
-		if !osc8Safe(t.full) {
-			continue
-		}
 		start, end, ok := findPlainRange(rendered[cursor:], t.display)
 		if !ok {
-			unresolved = append(unresolved, t)
+			if osc8Safe(t.full) {
+				unresolved = append(unresolved, t)
+			}
 			continue
 		}
 		start += cursor
 		end += cursor
+		if !osc8Safe(t.full) {
+			cursor = end
+			continue
+		}
 		r, g, b := hexToRGB(colorLink)
 		styled := osc8Open(t.full) +
 			"\x1b[4;38;2;" + strconv.Itoa(r) + ";" + strconv.Itoa(g) + ";" + strconv.Itoa(b) + "m" +

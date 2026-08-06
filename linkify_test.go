@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/mattn/go-runewidth"
 )
 
 func TestTruncateBareURLsLeavesShortURLsAlone(t *testing.T) {
@@ -112,6 +114,30 @@ func TestTruncateBareURLsFenceCharMustMatch(t *testing.T) {
 	}
 }
 
+// Under an East Asian / CJK locale, go-runewidth measures the ellipsis
+// (U+2026, East Asian Ambiguous) as 2 cells, not 1. Hardcoding "-1" for its
+// cost would leave the assembled display text one cell over budget in that
+// locale, wrapping anyway and silently falling back to the pre-#15-fix bug
+// for every long URL rendered there.
+func TestTruncateBareURLsAccountsForWideEllipsis(t *testing.T) {
+	old := runewidth.DefaultCondition.EastAsianWidth
+	runewidth.DefaultCondition.EastAsianWidth = true
+	defer func() { runewidth.DefaultCondition.EastAsianWidth = old }()
+
+	url := "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
+	raw := "- " + url + "\n"
+	const width = 24
+
+	_, truncations := truncateBareURLs(raw, width, nil)
+	if len(truncations) != 1 {
+		t.Fatalf("expected 1 truncation, got %d: %+v", len(truncations), truncations)
+	}
+	display := truncations[0].display
+	if w := visibleWidth(display); w > width-2 {
+		t.Errorf("display text %d cells wide under EastAsianWidth, exceeds budget (width %d - reserve 2): %q", w, width, display)
+	}
+}
+
 func TestOsc8SafeRejectsControlBytes(t *testing.T) {
 	if osc8Safe("https://example.test/\x07inject") {
 		t.Error("URL containing BEL should be unsafe")
@@ -168,6 +194,36 @@ func TestTruncateBareURLsCutsWideRunesByCellWidth(t *testing.T) {
 	// (each wrongly assumed to cost 1 cell instead of 2).
 	if n := len([]rune(display)); n > width-2 {
 		t.Errorf("display text kept %d runes at width %d — looks rune-counted, not cell-counted: %q", n, width, display)
+	}
+}
+
+// An unsafe (control-byte) truncation followed by a SAFE truncation that
+// collides on identical display text: the unsafe one is skipped for
+// hyperlinking, but its occurrence must still be consumed by the cursor —
+// otherwise the safe truncation's search starts from offset 0 again, finds
+// the FIRST (unsafe, still-plain) occurrence, and hyperlinks the wrong line.
+func TestLinkifyTruncationsUnsafeSkipAdvancesCursor(t *testing.T) {
+	styled := func(text string) string {
+		return "\x1b[38;2;1;2;3m" + text + "\x1b[0m"
+	}
+	rendered := styled("same") + "\n" + styled("same")
+	truncations := []urlTruncation{
+		{display: "same", full: "https://example.test/\x07unsafe"},
+		{display: "same", full: "https://example.test/safe"},
+	}
+	out, unresolved := linkifyTruncations(rendered, truncations)
+	if len(unresolved) != 0 {
+		t.Fatalf("unexpected unresolved: %+v", unresolved)
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %q", len(lines), out)
+	}
+	if strings.Contains(lines[0], "\x1b]8;;") {
+		t.Errorf("unsafe truncation's own line got hyperlinked: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "\x1b]8;;https://example.test/safe") {
+		t.Errorf("safe truncation's target missing from its own (second) line: %q", lines[1])
 	}
 }
 
