@@ -80,11 +80,7 @@ func runInit(args []string) int {
 	}
 
 	if filepath.Base(filepath.Dir(abs)) == sidecarDirName {
-		dir := filepath.Dir(abs)
-		root := filepath.Dir(dir)
-		if r, ok := git(dir, "rev-parse", "--show-toplevel"); ok {
-			root = r
-		}
+		root := repoRoot(filepath.Dir(filepath.Dir(abs)))
 		excludeSidecarDir(root)
 	} else if assumeYes {
 		gitExcludeDefault(abs)
@@ -92,11 +88,7 @@ func runInit(args []string) int {
 		offerGitExclude(abs)
 	}
 	if assumeYes {
-		dir := filepath.Dir(abs)
-		root := dir
-		if r, ok := git(dir, "rev-parse", "--show-toplevel"); ok {
-			root = r
-		}
+		root := repoRoot(filepath.Dir(abs))
 		rel, err := filepath.Rel(root, abs)
 		if err != nil {
 			rel = filepath.Base(abs)
@@ -251,11 +243,7 @@ func offerClaudeHook(fileAbs string, sections []Section) {
 	if !stdinIsTerminal() {
 		return
 	}
-	dir := filepath.Dir(fileAbs)
-	root := dir
-	if r, ok := git(dir, "rev-parse", "--show-toplevel"); ok {
-		root = r
-	}
+	root := repoRoot(filepath.Dir(fileAbs))
 	rel, err := filepath.Rel(root, fileAbs)
 	if err != nil {
 		rel = filepath.Base(fileAbs)
@@ -677,6 +665,17 @@ func writeIgnore(path, line string) {
 		}
 	}
 	fmt.Printf("Added %q to %s\n", line, label)
+}
+
+// repoRoot resolves the git work tree root for dir via `git rev-parse
+// --show-toplevel`, falling back to dir itself outside a work tree (or when
+// git is missing) — the shared lookup behind every call site that needs a
+// path relative to the repo root but must still work outside a repo.
+func repoRoot(dir string) string {
+	if r, ok := git(dir, "rev-parse", "--show-toplevel"); ok {
+		return r
+	}
+	return dir
 }
 
 // git runs a git command in dir and returns trimmed stdout; ok is false if
