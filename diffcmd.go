@@ -15,11 +15,18 @@ import (
 func runDiff(args []string) int {
 	path := defaultBoardPath()
 	if len(args) > 0 {
-		if strings.HasPrefix(args[0], "-") {
-			fmt.Fprintf(os.Stderr, "sidecar diff: unknown flag %q\n", args[0])
-			return 2
+		switch args[0] {
+		case "-h", "--help":
+			fmt.Println("usage: sidecar diff [file.md]")
+			fmt.Println("Prints board changes since the last run.")
+			return 0
+		default:
+			if strings.HasPrefix(args[0], "-") {
+				fmt.Fprintf(os.Stderr, "sidecar diff: unknown flag %q\n", args[0])
+				return 2
+			}
+			path = args[0]
 		}
-		path = args[0]
 	}
 	abs, err := filepath.Abs(expandTilde(path))
 	if err != nil {

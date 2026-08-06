@@ -165,6 +165,28 @@ func TestRunDiffUnknownFlagRejected(t *testing.T) {
 	})
 }
 
+// Q4: `sidecar diff -h`/`--help` must print usage and exit 0, not fall
+// through to the unknown-flag rejection.
+func TestRunDiffHelpFlag(t *testing.T) {
+	for _, flag := range []string{"-h", "--help"} {
+		var code int
+		errOut := captureStderr(t, func() {
+			out := captureStdout(t, func() {
+				code = runDiff([]string{flag})
+			})
+			if !strings.Contains(out, "usage: sidecar diff") {
+				t.Errorf("%s: out = %q, want usage line", flag, out)
+			}
+		})
+		if code != 0 {
+			t.Errorf("%s: exit = %d, want 0", flag, code)
+		}
+		if errOut != "" {
+			t.Errorf("%s: stderr = %q, want empty", flag, errOut)
+		}
+	}
+}
+
 func TestRunDiffMissingBoardSilent(t *testing.T) {
 	withWorkDir(t, t.TempDir(), func() {
 		out := captureStdout(t, func() {
