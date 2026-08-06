@@ -521,6 +521,33 @@ func TestMigrateLegacyBoardUntracked(t *testing.T) {
 	}
 }
 
+// T1: without --yes and without a TTY to answer the prompt (e.g. a hook's
+// piped/EOF stdin), migrateLegacyBoard must leave the legacy board alone —
+// readChoice() on EOF returns "", which defaults to yes and would otherwise
+// rename a file no one agreed to move.
+func TestMigrateLegacyBoardNoTTYLeavesLegacyAlone(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- carry me over\n"), 0o644)
+
+	// go test's own stdin is not a terminal, matching the hook scenario —
+	// no explicit redirect needed, but withStdin("") makes the EOF condition
+	// explicit and reproducible regardless of how the test binary is run.
+	var migrated bool
+	withStdin(t, "", func() {
+		migrated = migrateLegacyBoard(dir, false)
+	})
+	if migrated {
+		t.Error("migrated with no TTY to answer the prompt")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "SIDECAR.md")); err != nil {
+		t.Error("legacy board was moved despite no TTY")
+	}
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err == nil {
+		t.Error("new board created despite no TTY to confirm migration")
+	}
+}
+
 func TestMigrateLegacyBoardNothingToDo(t *testing.T) {
 	dir := t.TempDir()
 	mustRun(t, dir, "git", "init", "-q")

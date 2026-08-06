@@ -164,6 +164,12 @@ func migrateLegacyBoard(root string, assumeYes bool) bool {
 		targetRel = rel
 	}
 	if !assumeYes {
+		if !stdinIsTerminal() {
+			// No one can answer — EOF on a piped/hookish stdin makes
+			// readChoice() return "", which defaults to yes and would
+			// silently rename a file no one agreed to move.
+			return false
+		}
 		fmt.Printf("Move %s into %s/? [Y/n]: ", legacyFile, sidecarDirName)
 		if c := readChoice(); c == "n" || c == "no" {
 			fmt.Printf("Left %s in place — %s will take precedence once you create it.\n", legacyFile, targetRel)
