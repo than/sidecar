@@ -1,7 +1,27 @@
 // sections.go
 package main
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
+
+// leadingEmoji reports whether label's first whitespace-separated field is a
+// leading emoji/symbol — "starts with an emoji" ≈ the first field's first
+// rune is a symbol. Shared by sectionTag (semdiff.go, for the short diff-line
+// tag) and sectionFromLabel (below, for splitting a heading into
+// Section.Emoji/Name); ok is false when label is a single field or its first
+// field isn't a symbol.
+func leadingEmoji(label string) (emoji string, ok bool) {
+	fields := strings.Fields(label)
+	if len(fields) > 1 {
+		r := []rune(fields[0])[0]
+		if unicode.IsSymbol(r) || r > 0x2600 {
+			return fields[0], true
+		}
+	}
+	return "", false
+}
 
 // Section is one queue heading. Emoji is optional (a text-only section like
 // "Todo" is allowed); Hint is an optional one-line meaning that flows into the

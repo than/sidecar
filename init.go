@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"unicode"
 
 	"golang.org/x/term"
 )
@@ -137,12 +136,9 @@ func sectionsFromBoard(raw string) ([]Section, bool) {
 // the whole label, when it doesn't) becomes Name. No Hint — that's not
 // recoverable from the rendered heading.
 func sectionFromLabel(label string) Section {
-	fields := strings.Fields(label)
-	if len(fields) > 1 {
-		r := []rune(fields[0])[0]
-		if unicode.IsSymbol(r) || r > 0x2600 {
-			return Section{Emoji: fields[0], Name: strings.Join(fields[1:], " ")}
-		}
+	if emoji, ok := leadingEmoji(label); ok {
+		fields := strings.Fields(label)
+		return Section{Emoji: emoji, Name: strings.Join(fields[1:], " ")}
 	}
 	return Section{Name: label}
 }

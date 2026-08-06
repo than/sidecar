@@ -4,7 +4,6 @@ package main
 import (
 	"fmt"
 	"strings"
-	"unicode"
 )
 
 type itemRef struct {
@@ -108,14 +107,10 @@ func flatten(b Board) []*itemRef {
 }
 
 // sectionTag is the section's emoji when the label starts with one, else the
-// whole label. "Starts with an emoji" ≈ first field's first rune is a symbol.
+// whole label.
 func sectionTag(label string) string {
-	fields := strings.Fields(label)
-	if len(fields) > 1 {
-		r := []rune(fields[0])[0]
-		if unicode.IsSymbol(r) || r > 0x2600 {
-			return fields[0]
-		}
+	if emoji, ok := leadingEmoji(label); ok {
+		return emoji
 	}
 	return label
 }
