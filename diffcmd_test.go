@@ -316,6 +316,25 @@ func TestRunDiffTooManyArgsRejected(t *testing.T) {
 	})
 }
 
+// T4: runDiff against a legacy root board (or any custom path not itself
+// resident in .sidecar/) MkdirAlls a fresh .sidecar/ for its snapshot — the
+// one place sidecar writes into a repo without arranging to be ignored.
+// When that dir is newly created inside a git work tree, it must land in
+// .git/info/exclude, same as init does for the default board.
+func TestRunDiffExcludesFreshSnapshotDirForLegacyBoard(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	board := filepath.Join(dir, "SIDECAR.md")
+	os.WriteFile(board, []byte(diffBoardV1), 0o644)
+	withWorkDir(t, dir, func() {
+		captureStdout(t, func() { runDiff([]string{"SIDECAR.md"}) })
+	})
+	data, err := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if err != nil || !strings.Contains(string(data), sidecarDirName+"/") {
+		t.Fatalf("info/exclude = %q, err %v, want %s/", data, err, sidecarDirName)
+	}
+}
+
 func TestRunDiffMissingBoardSilent(t *testing.T) {
 	withWorkDir(t, t.TempDir(), func() {
 		out := captureStdout(t, func() {

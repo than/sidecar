@@ -126,12 +126,27 @@ func snapshotPath(boardAbs string) string {
 // swallowing it — otherwise a read-only checkout reprints the same diff
 // forever with no explanation of why it never goes silent.
 func writeSnapshot(path string, data []byte) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	_, statErr := os.Stat(dir)
+	freshDir := os.IsNotExist(statErr)
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar diff:", err)
 		return
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar diff:", err)
+		return
+	}
+
+	// A legacy or custom board not itself resident in .sidecar/ gets a fresh
+	// .sidecar/ MkdirAll'd here for its snapshot — the one place sidecar
+	// writes into a repo without arranging to be ignored. Exclude it now,
+	// the same as init does for the default board; silent on failure (not a
+	// git work tree, git missing) like the rest of this path, except the
+	// confirmation excludeSidecarDir already prints via writeIgnore.
+	if freshDir && filepath.Base(dir) == sidecarDirName {
+		excludeSidecarDir(repoRoot(filepath.Dir(dir)))
 	}
 }
 
