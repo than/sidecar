@@ -84,6 +84,62 @@ func TestBareURLIntact(t *testing.T) {
 	}
 }
 
+// A bare URL wider than the render width must never be split across lines —
+// glamour's word-wrap force-breaks long "words" mid-character, which turns
+// one clickable URL into two dead fragments (issue #15). The full URL must
+// still be reachable, as an OSC 8 hyperlink target, even though the visible
+// text is truncated to fit.
+func TestLongBareURLNeverWraps(t *testing.T) {
+	const url = "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
+	raw := "- " + url + "\n"
+
+	for _, width := range []int{24, 40, 78} {
+		out, err := renderMarkdown(raw, width)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain := stripANSI(out)
+		urlLines := 0
+		for _, line := range strings.Split(plain, "\n") {
+			if strings.Contains(line, "http") {
+				urlLines++
+			}
+		}
+		if urlLines != 1 {
+			t.Errorf("width %d: URL text spread across %d lines: %q", width, urlLines, plain)
+		}
+		for i, line := range strings.Split(out, "\n") {
+			if w := visibleWidth(line); w > width {
+				t.Errorf("width %d, line %d: visible width %d exceeds width: %q", width, i, w, stripANSI(line))
+			}
+		}
+		if !strings.Contains(out, "\x1b]8;;"+url) {
+			t.Errorf("width %d: OSC 8 hyperlink target for full URL not found in:\n%q", width, out)
+		}
+	}
+}
+
+// stripANSI and visibleWidth must treat OSC 8 hyperlink escapes as invisible
+// — otherwise the URL embedded in the escape target gets counted as visible
+// text and corrupts width checks and diff comparisons.
+func TestOSC8IsInvisible(t *testing.T) {
+	const url = "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
+	raw := "- " + url + "\n"
+	out, err := renderMarkdown(raw, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := stripANSI(out)
+	if strings.Contains(plain, "\x1b") {
+		t.Errorf("stripANSI left escape bytes: %q", plain)
+	}
+	for i, line := range strings.Split(out, "\n") {
+		if w := visibleWidth(line); w > 24 {
+			t.Errorf("line %d: visibleWidth counted hyperlink target as visible: %d: %q", i, w, line)
+		}
+	}
+}
+
 // Emoji section markers are double-width; wrapping must account for that.
 func TestEmojiHeadingWidth(t *testing.T) {
 	out, err := renderMarkdown("## 🔴 Needs action right now with a long heading tail end", 40)

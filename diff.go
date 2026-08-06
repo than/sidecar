@@ -9,9 +9,11 @@ import (
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
-// stripANSI removes SGR escape sequences, leaving the visible text.
+// stripANSI removes SGR escape sequences and OSC 8 hyperlink wrappers,
+// leaving the visible text. Hyperlink targets (see linkify.go) never show
+// up as text, matching how a terminal renders them.
 func stripANSI(s string) string {
-	return ansiRE.ReplaceAllString(s, "")
+	return osc8RE.ReplaceAllString(ansiRE.ReplaceAllString(s, ""), "")
 }
 
 // changedLines returns the indices into newLines that are new or modified

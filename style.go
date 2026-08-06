@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/glamour"
@@ -32,6 +33,12 @@ const (
 )
 
 func ptr[T any](v T) *T { return &v }
+
+// osc8RE matches an OSC 8 hyperlink open ("\x1b]8;;URL\x07") or close
+// ("\x1b]8;;\x07") sequence — BEL-terminated, as emitted by osc8Open in
+// linkify.go. Shared by visibleWidth here and stripANSI in diff.go so both
+// treat the hyperlink target as invisible, matching what a terminal does.
+var osc8RE = regexp.MustCompile("\x1b\\]8;;[^\x07]*\x07")
 
 // styleConfig is a compact glamour style: at most one blank line between
 // blocks, zero margins (glamour margins pad every line with trailing spaces
@@ -124,6 +131,12 @@ func renderMarkdown(raw string, width int) (string, error) {
 	if width < 10 {
 		width = 10
 	}
+	// Bare URLs wider than width can't survive glamour's word-wrap intact —
+	// it force-breaks long "words" mid-character (issue #15). Shrink any
+	// bare-URL-only line to fit before rendering, then re-attach the full
+	// URL as an OSC 8 hyperlink target after rendering so the visible,
+	// possibly-truncated text still opens the right place.
+	raw, truncations := truncateBareURLs(raw, width)
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(styleConfig()),
 		glamour.WithWordWrap(width),
@@ -138,7 +151,9 @@ func renderMarkdown(raw string, width int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return tidy(out), nil
+	out = tidy(out)
+	out = linkifyTruncations(out, truncations)
+	return out, nil
 }
 
 // tidy strips trailing-space padding and collapses runs of blank lines to a
@@ -171,6 +186,13 @@ func tidy(s string) string {
 }
 
 // visibleWidth is the printable cell width of a line, ignoring ANSI codes.
+//
+// reflow's ANSI-aware width counter only recognizes CSI sequences
+// ("\x1b[...letter") as escapes; it has no notion of OSC 8 hyperlinks
+// ("\x1b]8;;URL\x07text\x1b]8;;\x07") and would treat the URL bytes inside
+// the escape as visible text — any lowercase letter in the URL looks like a
+// premature CSI terminator to it. Strip OSC 8 sequences first so the target
+// URL never leaks into the width count.
 func visibleWidth(line string) int {
-	return reflowansi.PrintableRuneWidth(line)
+	return reflowansi.PrintableRuneWidth(osc8RE.ReplaceAllString(line, ""))
 }
