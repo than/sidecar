@@ -571,3 +571,41 @@ func TestTabAndEnterNoOpWithoutSections(t *testing.T) {
 		t.Error("Tab/Enter should not have altered a headingless file's render")
 	}
 }
+
+// On a headingless file (no board parsed), Space must fall through to the
+// viewport and page down, restoring its pre-feature behavior instead of
+// being swallowed by toggleCursor's no-op.
+func TestSpaceScrollsWithoutSections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, path, manyLines(200, "x"))
+	m := testModel(t, path)
+	m.reload(true)
+
+	if len(m.board.Sections) != 0 {
+		t.Fatalf("expected no board sections for a headingless file, got %d", len(m.board.Sections))
+	}
+	if m.vp.YOffset != 0 {
+		t.Fatalf("YOffset = %d, want 0 before Space", m.vp.YOffset)
+	}
+
+	m = sendKey(t, m, " ")
+	if m.vp.YOffset == 0 {
+		t.Error("Space should have scrolled the viewport on a headingless file, but YOffset is still 0")
+	}
+}
+
+// Enter on a headingless file remains a harmless no-op: no crash, no change.
+func TestEnterNoOpWithoutSections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, path, "# Title\n\nplain notes, no headings\n")
+	m := testModel(t, path)
+	m.reload(true)
+
+	before := stripANSI(m.vp.View())
+	m = sendSpecialKey(t, m, tea.KeyEnter)
+	after := stripANSI(m.vp.View())
+
+	if before != after {
+		t.Errorf("Enter altered a headingless file's render:\nbefore: %q\nafter:  %q", before, after)
+	}
+}

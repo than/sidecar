@@ -129,6 +129,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.moveCursor(-1)
 			return m, nil
 		case "enter", " ":
+			if len(m.board.Sections) == 0 {
+				// No board parsed: fall through to the viewport so " "
+				// keeps its default page-down binding.
+				break
+			}
 			m.toggleCursor()
 			return m, nil
 		}
