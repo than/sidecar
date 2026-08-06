@@ -16,9 +16,9 @@ import (
 // recommended default applies without asking: a legacy root SIDECAR.md is
 // migrated, the board's home is git-excluded, and a CLAUDE.md note plus
 // reconcile hook are written. --no-claude and --keep-board opt out of the
-// Claude Code wiring and the migration, respectively. --yes/-y are accepted
-// as no-op aliases for scripts and muscle memory written before this
-// behavior became the default. Returns a process exit code.
+// Claude Code wiring and the migration, respectively. --yes/-y skip the
+// interactive section picker that otherwise runs when a brand-new board is
+// created from a terminal. Returns a process exit code.
 func runInit(args []string) int {
 	assumeYes := false
 	noClaude := false
@@ -39,7 +39,8 @@ func runInit(args []string) int {
 			fmt.Println("CLAUDE.md note + reconcile hook).")
 			fmt.Println()
 			fmt.Println("  --no-claude    skip the CLAUDE.md note and reconcile hook")
-			fmt.Println("  --keep-board   skip migrating a legacy root SIDECAR.md")
+			fmt.Println("  --keep-board   leave a legacy root SIDECAR.md in place and point")
+			fmt.Println("                 init at it, instead of migrating to .sidecar/")
 			fmt.Println("  --yes, -y      skip the section picker on a brand-new board")
 			return 0
 		default:
@@ -64,6 +65,7 @@ func runInit(args []string) int {
 	}
 
 	migrated := false
+	keptLegacyBoard := false
 	if isDefaultTarget {
 		// Migrate against the directory the target itself resolves in — the
 		// target's parent's parent (.sidecar/sidecar.md → cwd) — not the git
@@ -72,16 +74,19 @@ func runInit(args []string) int {
 		// out from under the directory the user actually asked to init.
 		root := filepath.Dir(filepath.Dir(abs))
 		if keepBoard {
-			// Keep the legacy root board right where it is — target it
-			// directly instead of scaffolding a fresh .sidecar/sidecar.md
-			// that would silently shadow it (defaultBoardPath prefers the
-			// new location over the legacy one). The custom-path code below
-			// already handles a non-default board correctly.
+			// Keep the legacy root board right where it is — but only
+			// retarget init at it when .sidecar/sidecar.md doesn't already
+			// exist. When both boards are present, defaultBoardPath still
+			// prefers .sidecar/sidecar.md, so wiring the note/hook/"Watch
+			// it" hint to the legacy file would point them at a board the
+			// viewer won't open. The custom-path code below already
+			// handles a non-default board correctly.
 			legacy := filepath.Join(root, legacyFile)
 			if _, err := os.Stat(legacy); err == nil {
-				target = legacyFile
-				abs = legacy
-				isDefaultTarget = false
+				if _, err := os.Stat(filepath.Join(root, sidecarDirName, "sidecar.md")); os.IsNotExist(err) {
+					target, abs, isDefaultTarget = legacyFile, legacy, false
+					keptLegacyBoard = true
+				}
 			}
 		} else {
 			migrated = migrateLegacyBoard(root) // silent — no prompt on bare init
@@ -128,6 +133,19 @@ func runInit(args []string) int {
 
 	if filepath.Base(filepath.Dir(abs)) == sidecarDirName {
 		excludeSidecarDir(repoRootForBoard(abs), true)
+	} else if keptLegacyBoard {
+		// gitExcludeDefault's .git/info/exclude entry is a no-op for a
+		// tracked file — git doesn't stop tracking something it already
+		// tracks just because it's ignored. migrateLegacyBoard handles this
+		// case by untracking the file itself; --keep-board deliberately
+		// doesn't touch git history, so it points the human at the command
+		// instead of silently doing nothing (or printing a misleading
+		// "Added …" confirmation).
+		if _, tracked := git(filepath.Dir(abs), "ls-files", "--error-unmatch", legacyFile); tracked {
+			fmt.Printf("%s is tracked — run 'git rm --cached %s' to untrack it.\n", legacyFile, legacyFile)
+		} else {
+			gitExcludeDefault(abs)
+		}
 	} else {
 		gitExcludeDefault(abs)
 	}
