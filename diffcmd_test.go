@@ -326,9 +326,15 @@ func TestRunDiffExcludesFreshSnapshotDirForLegacyBoard(t *testing.T) {
 	mustRun(t, dir, "git", "init", "-q")
 	board := filepath.Join(dir, "SIDECAR.md")
 	os.WriteFile(board, []byte(diffBoardV1), 0o644)
+	var out string
 	withWorkDir(t, dir, func() {
-		captureStdout(t, func() { runDiff([]string{"SIDECAR.md"}) })
+		out = captureStdout(t, func() { runDiff([]string{"SIDECAR.md"}) })
 	})
+	// The residual from re-review: this is a first-run silent seed — the
+	// hook's stdout must stay empty even though the exclusion runs.
+	if out != "" {
+		t.Errorf("printed %q on the silent seed run — hook stdout must stay empty", out)
+	}
 	data, err := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
 	if err != nil || !strings.Contains(string(data), sidecarDirName+"/") {
 		t.Fatalf("info/exclude = %q, err %v, want %s/", data, err, sidecarDirName)

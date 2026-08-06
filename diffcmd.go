@@ -142,11 +142,12 @@ func writeSnapshot(path string, data []byte) {
 	// A legacy or custom board not itself resident in .sidecar/ gets a fresh
 	// .sidecar/ MkdirAll'd here for its snapshot — the one place sidecar
 	// writes into a repo without arranging to be ignored. Exclude it now,
-	// the same as init does for the default board; silent on failure (not a
-	// git work tree, git missing) like the rest of this path, except the
-	// confirmation excludeSidecarDir already prints via writeIgnore.
+	// the same as init does for the default board — but this runs on every
+	// plain `sidecar diff` hook invocation, so it must stay silent on
+	// stdout like the rest of this path (verbose=false); errors still
+	// surface via writeIgnore's own stderr print.
 	if freshDir && filepath.Base(dir) == sidecarDirName {
-		excludeSidecarDir(repoRoot(filepath.Dir(dir)))
+		excludeSidecarDir(repoRoot(filepath.Dir(dir)), false)
 	}
 }
 

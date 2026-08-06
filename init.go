@@ -88,7 +88,7 @@ func runInit(args []string) int {
 
 	if filepath.Base(filepath.Dir(abs)) == sidecarDirName {
 		root := repoRoot(filepath.Dir(filepath.Dir(abs)))
-		excludeSidecarDir(root)
+		excludeSidecarDir(root, true)
 	} else if assumeYes {
 		gitExcludeDefault(abs)
 	} else {
@@ -546,8 +546,11 @@ func stdinIsTerminal() bool {
 
 // excludeSidecarDir appends ".sidecar/" to the repo's .git/info/exclude —
 // local and uncommitted, so the repo never learns sidecar exists. No-op
-// outside a work tree or when the entry is already ignored.
-func excludeSidecarDir(dir string) {
+// outside a work tree or when the entry is already ignored. verbose controls
+// whether the "Added …" confirmation prints to stdout — init's paths want
+// it, but the diff hook's silent seed path (writeSnapshot) must not print
+// anything on a plain `sidecar diff` run.
+func excludeSidecarDir(dir string, verbose bool) {
 	if out, ok := git(dir, "rev-parse", "--is-inside-work-tree"); !ok || out != "true" {
 		return
 	}
@@ -561,7 +564,7 @@ func excludeSidecarDir(dir string) {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(dir, path)
 	}
-	writeIgnore(path, sidecarDirName+"/")
+	writeIgnore(path, sidecarDirName+"/", verbose)
 }
 
 // offerGitExclude prompts to keep the file out of git, when inside a work
@@ -575,7 +578,7 @@ func offerGitExclude(fileAbs string) {
 		// the same automatic whole-dir exclude as the default board — never
 		// the custom-path prompt, which would exclude just the one file and
 		// leave the rest of .sidecar/ (including the snapshot) untracked.
-		excludeSidecarDir(repoRoot(dir))
+		excludeSidecarDir(repoRoot(dir), true)
 		return
 	}
 	if out, ok := git(dir, "rev-parse", "--is-inside-work-tree"); !ok || out != "true" {
@@ -605,7 +608,7 @@ Choice [E/g/n]: `, rel)
 	switch readChoice() {
 	case "g":
 		gitignore := filepath.Join(root, ".gitignore")
-		writeIgnore(gitignore, rel)
+		writeIgnore(gitignore, rel, true)
 		excludeCustomPathSnapshotDirTo(gitignore, rel)
 	case "n":
 		fmt.Println("Left tracked.")
@@ -623,7 +626,7 @@ func gitExcludeDefault(fileAbs string) {
 	dir := filepath.Dir(fileAbs)
 	if filepath.Base(dir) == sidecarDirName {
 		// Same automatic whole-dir exclude as offerGitExclude — see there.
-		excludeSidecarDir(repoRoot(dir))
+		excludeSidecarDir(repoRoot(dir), true)
 		return
 	}
 	if out, ok := git(dir, "rev-parse", "--is-inside-work-tree"); !ok || out != "true" {
@@ -657,7 +660,7 @@ func applyExcludeDefault(dir, rel string) {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(dir, path)
 	}
-	writeIgnore(path, rel)
+	writeIgnore(path, rel, true)
 }
 
 // excludeCustomPathSnapshotDir excludes the .sidecar/ directory that will
@@ -677,12 +680,19 @@ func excludeCustomPathSnapshotDir(dir, rel string) {
 // .git/info/exclude via git. Idempotent via writeIgnore/appendLine.
 func excludeCustomPathSnapshotDirTo(ignoreFile, rel string) {
 	sidecarRel := filepath.Join(filepath.Dir(rel), sidecarDirName) + "/"
-	writeIgnore(ignoreFile, sidecarRel)
+	writeIgnore(ignoreFile, sidecarRel, true)
 }
 
-func writeIgnore(path, line string) {
+// writeIgnore appends line to the ignore file at path, printing a
+// confirmation to stdout when verbose — callers on a silent path (a hook's
+// snapshot write, see excludeSidecarDir) pass false so stdout stays empty;
+// errors still go to stderr either way.
+func writeIgnore(path, line string, verbose bool) {
 	if err := appendLine(path, line); err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
+		return
+	}
+	if !verbose {
 		return
 	}
 	// Show a repo-relative-ish label for the ignore file.

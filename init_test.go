@@ -311,13 +311,13 @@ func TestReconcileMessageLabelsEmptyDropsSectionsClause(t *testing.T) {
 func TestExcludeSidecarDir(t *testing.T) {
 	dir := t.TempDir()
 	mustRun(t, dir, "git", "init", "-q")
-	excludeSidecarDir(dir)
+	excludeSidecarDir(dir, true)
 	data, err := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
 	if err != nil || !strings.Contains(string(data), ".sidecar/") {
 		t.Fatalf("info/exclude = %q, err %v", data, err)
 	}
 	// Idempotent: a second call adds nothing.
-	excludeSidecarDir(dir)
+	excludeSidecarDir(dir, true)
 	again, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
 	if strings.Count(string(again), ".sidecar/") != 1 {
 		t.Errorf("exclude entry duplicated:\n%s", again)
@@ -325,13 +325,28 @@ func TestExcludeSidecarDir(t *testing.T) {
 }
 
 // Q3: excludeSidecarDir must print the same confirmation line every other
-// exclude path prints, instead of succeeding silently.
+// exclude path prints, instead of succeeding silently — when verbose.
 func TestExcludeSidecarDirPrintsConfirmation(t *testing.T) {
 	dir := t.TempDir()
 	mustRun(t, dir, "git", "init", "-q")
-	out := captureStdout(t, func() { excludeSidecarDir(dir) })
+	out := captureStdout(t, func() { excludeSidecarDir(dir, true) })
 	if !strings.Contains(out, `Added ".sidecar/"`) {
 		t.Errorf("out = %q, want a confirmation line like the other exclude paths", out)
+	}
+}
+
+// The residual from re-review: writeSnapshot's fresh-dir exclusion runs on
+// every plain `sidecar diff` hook invocation and must stay silent on stdout.
+func TestExcludeSidecarDirQuietPrintsNothing(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	out := captureStdout(t, func() { excludeSidecarDir(dir, false) })
+	if out != "" {
+		t.Errorf("out = %q, want no stdout output when verbose=false", out)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if err != nil || !strings.Contains(string(data), ".sidecar/") {
+		t.Fatalf("info/exclude = %q, err %v — the exclude itself must still happen", data, err)
 	}
 }
 
