@@ -35,6 +35,7 @@ Two flags opt out of a default: `--no-claude` skips the `CLAUDE.md` note and rec
 
 - Renders Markdown with [glamour] and re-renders the moment the file changes. Sidecar watches the parent directory with fsnotify and a 100-millisecond debounce, so it handles atomic rename-swaps, deletes, and recreates — and waits quietly when the file doesn’t exist yet.
 - Scrolls with `j` and `k`, the arrow keys, `PgUp` and `PgDn`, and `g` and `G` for top and bottom. Sidecar keeps your scroll position across reloads. It doesn’t capture the mouse, so your terminal’s text selection and clickable links keep working.
+- `Tab` and `Shift+Tab` move a cursor between sections; `Enter` or `Space` collapses or expands the section under it. `✅ Done` and `📦 Shipped` start collapsed — every heading shows its item count, e.g. `✅ Done (12)`.
 - Reloads on demand with `r`, and quits with `q`.
 - Re-renders when you resize the terminal, at the pane width minus 2. It never renders wider than the pane.
 - Points at what changed: on reload, a changed bullet's `•` becomes a bright

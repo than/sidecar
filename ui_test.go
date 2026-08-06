@@ -477,3 +477,97 @@ func TestNoHeadingsFileUnaffected(t *testing.T) {
 		t.Error("plain file should render unchanged")
 	}
 }
+
+func sendKey(t *testing.T, m model, key string) model {
+	t.Helper()
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+	if next2, ok := next.(model); ok {
+		return next2
+	}
+	t.Fatalf("Update did not return a model for key %q", key)
+	return model{}
+}
+
+func sendSpecialKey(t *testing.T, m model, kt tea.KeyType) model {
+	t.Helper()
+	next, _ := m.Update(tea.KeyMsg{Type: kt})
+	return next.(model)
+}
+
+// Tab moves the cursor forward through sections and wraps at the end.
+func TestTabMovesCursorAndWraps(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, path, "## 🧠 Needs action\n\n- x\n\n## 🚧 In progress\n\n- y\n")
+	m := testModel(t, path)
+	m.reload(true)
+
+	if m.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0 after first load", m.cursor)
+	}
+	m = sendSpecialKey(t, m, tea.KeyTab)
+	if m.cursor != 1 {
+		t.Errorf("cursor = %d, want 1 after one Tab", m.cursor)
+	}
+	m = sendSpecialKey(t, m, tea.KeyTab)
+	if m.cursor != 0 {
+		t.Errorf("cursor = %d, want 0 after wrapping", m.cursor)
+	}
+}
+
+// Shift+Tab moves backward and wraps the other way.
+func TestShiftTabMovesBackwardAndWraps(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, path, "## 🧠 Needs action\n\n- x\n\n## 🚧 In progress\n\n- y\n")
+	m := testModel(t, path)
+	m.reload(true)
+
+	m = sendSpecialKey(t, m, tea.KeyShiftTab)
+	if m.cursor != 1 {
+		t.Errorf("cursor = %d, want 1 after wrapping backward", m.cursor)
+	}
+}
+
+// Enter toggles the section at the cursor.
+func TestEnterTogglesCollapseAtCursor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, path, "## 🚧 In progress\n\n- Ship v2\n")
+	m := testModel(t, path)
+	m.reload(true) // cursor starts at 0: "🚧 In progress"
+
+	m = sendSpecialKey(t, m, tea.KeyEnter)
+	if strings.Contains(stripANSI(m.vp.View()), "Ship v2") {
+		t.Error("Enter should have collapsed the section under the cursor")
+	}
+
+	m = sendSpecialKey(t, m, tea.KeyEnter)
+	if !strings.Contains(stripANSI(m.vp.View()), "Ship v2") {
+		t.Error("second Enter should expand it again")
+	}
+}
+
+// Space does the same as Enter.
+func TestSpaceTogglesCollapseAtCursor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, path, "## 🚧 In progress\n\n- Ship v2\n")
+	m := testModel(t, path)
+	m.reload(true)
+
+	m = sendKey(t, m, " ")
+	if strings.Contains(stripANSI(m.vp.View()), "Ship v2") {
+		t.Error("Space should have collapsed the section under the cursor")
+	}
+}
+
+// Tab/Enter on a file with no sections is a harmless no-op.
+func TestTabAndEnterNoOpWithoutSections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, path, "# Title\n\nplain notes, no headings\n")
+	m := testModel(t, path)
+	m.reload(true)
+
+	m = sendSpecialKey(t, m, tea.KeyTab)
+	m = sendSpecialKey(t, m, tea.KeyEnter)
+	if !strings.Contains(stripANSI(m.vp.View()), "plain notes") {
+		t.Error("Tab/Enter should not have altered a headingless file's render")
+	}
+}

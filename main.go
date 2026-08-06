@@ -30,6 +30,8 @@ usage: sidecar [file.md]         (default: .sidecar/sidecar.md)
 
 keys:  j/k, arrows, PgUp/PgDn                scroll
        g / G                                top / bottom
+       tab / shift+tab                      move between sections
+       enter / space                        collapse / expand section
        r                                    force reload
        q                                    quit
 

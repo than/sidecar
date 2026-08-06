@@ -122,6 +122,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "G", "end":
 			m.vp.GotoBottom()
 			return m, nil
+		case "tab":
+			m.moveCursor(1)
+			return m, nil
+		case "shift+tab":
+			m.moveCursor(-1)
+			return m, nil
+		case "enter", " ":
+			m.toggleCursor()
+			return m, nil
 		}
 
 	case tea.WindowSizeMsg:
@@ -347,6 +356,50 @@ func (m *model) rerenderCollapse() {
 	offset := m.vp.YOffset
 	m.vp.SetContent(m.compose())
 	m.vp.SetYOffset(offset)
+}
+
+// moveCursor steps the section cursor by delta (±1), wrapping at both
+// ends, then re-tints the highlighted header and scrolls it into view. A
+// no-op when no board is parsed (cursor stays -1, see reload).
+func (m *model) moveCursor(delta int) {
+	n := len(m.board.Sections)
+	if n == 0 {
+		return
+	}
+	m.cursor = ((m.cursor+delta)%n + n) % n
+	m.recompose()
+	m.scrollToCursor()
+}
+
+// toggleCursor flips collapsed[label] for the section at the cursor and
+// re-renders. A no-op when no board is parsed.
+func (m *model) toggleCursor() {
+	if len(m.board.Sections) == 0 {
+		return
+	}
+	label := m.board.Sections[m.cursor].Label
+	m.collapsed[label] = !m.collapsed[label]
+	m.rerenderCollapse()
+}
+
+// scrollToCursor nudges the viewport's YOffset just enough to bring the
+// cursor's header line into view, with a 1-line margin — it does not
+// re-center the pane. A no-op when the cursor has no corresponding
+// rendered header line yet.
+func (m *model) scrollToCursor() {
+	if m.cursor < 0 || m.cursor >= len(m.headerLines) {
+		return
+	}
+	const margin = 1
+	target := m.headerLines[m.cursor]
+	top := m.vp.YOffset
+	bottom := top + m.vp.Height - 1
+	switch {
+	case target < top+margin:
+		m.vp.SetYOffset(max(0, target-margin))
+	case target > bottom-margin:
+		m.vp.SetYOffset(target - m.vp.Height + 1 + margin)
+	}
 }
 
 // renderWidth is the markdown wrap width: pane width minus 2, never wider
