@@ -1,7 +1,10 @@
 // board_test.go
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const sampleBoard = `# Sidecar
 
@@ -178,5 +181,30 @@ func TestParseBoardTabIndentedSubBullet(t *testing.T) {
 	want := "- Top item\n\t- sub"
 	if b.Sections[0].Items[0].Raw != want {
 		t.Errorf("raw = %q, want %q", b.Sections[0].Items[0].Raw, want)
+	}
+}
+
+func TestParseBoardLineRanges(t *testing.T) {
+	raw := "# Sidecar\n\n## 🧠 Needs action\n\n- Review PR #7\n  https://example.com/pr/7\n- Fix typo\n\n## ✅ Done\n\n- nothing yet\n"
+	b, ok := parseBoard(raw)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	lines := strings.Split(raw, "\n")
+
+	if b.Sections[0].HeaderLine != 2 || lines[b.Sections[0].HeaderLine] != "## 🧠 Needs action" {
+		t.Errorf("section 0 HeaderLine = %d (%q), want 2", b.Sections[0].HeaderLine, lines[b.Sections[0].HeaderLine])
+	}
+	if b.Sections[1].HeaderLine != 8 || lines[b.Sections[1].HeaderLine] != "## ✅ Done" {
+		t.Errorf("section 1 HeaderLine = %d (%q), want 8", b.Sections[1].HeaderLine, lines[b.Sections[1].HeaderLine])
+	}
+
+	item0 := b.Sections[0].Items[0] // "- Review PR #7" + continuation URL line
+	if item0.StartLine != 4 || item0.EndLine != 5 {
+		t.Errorf("item0 range = [%d,%d], want [4,5]", item0.StartLine, item0.EndLine)
+	}
+	item1 := b.Sections[0].Items[1] // "- Fix typo", no continuation
+	if item1.StartLine != 6 || item1.EndLine != 6 {
+		t.Errorf("item1 range = [%d,%d], want [6,6]", item1.StartLine, item1.EndLine)
 	}
 }

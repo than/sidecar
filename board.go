@@ -7,16 +7,23 @@ const sidecarDirName = ".sidecar"
 
 // BoardItem is one top-level bullet plus its continuation lines. Key is the
 // normalized first line — the identity items are matched by across versions.
+// StartLine/EndLine are 0-indexed, inclusive line indices into the raw text
+// split by "\n" — the exact lines applyCollapse (collapse.go) removes when
+// this item's section is collapsed.
 type BoardItem struct {
-	Key string
-	Raw string
+	Key       string
+	Raw       string
+	StartLine int
+	EndLine   int
 }
 
 // BoardSection is one "## " heading and the items under it. Label is the
-// heading without the "## " prefix.
+// heading without the "## " prefix. HeaderLine is the 0-indexed line index
+// of the "## " line itself.
 type BoardSection struct {
-	Label string
-	Items []BoardItem
+	Label      string
+	Items      []BoardItem
+	HeaderLine int
 }
 
 type Board struct {
@@ -34,7 +41,8 @@ func parseBoard(raw string) (Board, bool) {
 	var item *BoardItem
 	inComment := false
 	inFence := false
-	for _, ln := range strings.Split(raw, "\n") {
+	rawLines := strings.Split(raw, "\n")
+	for lineNo, ln := range rawLines {
 		trimmed := strings.TrimSpace(ln)
 		if inComment {
 			if strings.Contains(ln, "-->") {
@@ -57,12 +65,14 @@ func parseBoard(raw string) (Board, bool) {
 			inFence = !inFence
 			if item != nil {
 				item.Raw += "\n" + ln
+				item.EndLine = lineNo
 			}
 			continue
 		}
 		if inFence {
 			if item != nil {
 				item.Raw += "\n" + ln
+				item.EndLine = lineNo
 			}
 			continue
 		}
@@ -77,18 +87,27 @@ func parseBoard(raw string) (Board, bool) {
 		}
 		switch {
 		case strings.HasPrefix(ln, "## "):
-			b.Sections = append(b.Sections, BoardSection{Label: strings.TrimSpace(strings.TrimPrefix(ln, "## "))})
+			b.Sections = append(b.Sections, BoardSection{
+				Label:      strings.TrimSpace(strings.TrimPrefix(ln, "## ")),
+				HeaderLine: lineNo,
+			})
 			cur = &b.Sections[len(b.Sections)-1]
 			item = nil
 		case cur == nil:
 			// Preamble before the first heading — title, comments. Skip.
 		case strings.HasPrefix(ln, "- "):
-			cur.Items = append(cur.Items, BoardItem{Key: normalizeItem(ln), Raw: ln})
+			cur.Items = append(cur.Items, BoardItem{
+				Key:       normalizeItem(ln),
+				Raw:       ln,
+				StartLine: lineNo,
+				EndLine:   lineNo,
+			})
 			item = &cur.Items[len(cur.Items)-1]
 		case trimmed == "":
 			item = nil
 		case item != nil:
 			item.Raw += "\n" + ln
+			item.EndLine = lineNo
 		}
 	}
 	return b, len(b.Sections) > 0
