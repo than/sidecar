@@ -1021,6 +1021,13 @@ func TestInitKeepBoardTrackedLegacyPrintsUntrackHint(t *testing.T) {
 	if strings.Contains(string(data), "SIDECAR.md") {
 		t.Errorf("wrote a no-op exclude entry for a tracked file: %q", data)
 	}
+	// Round 3, Z1: the .sidecar/ snapshot dir that `sidecar diff` will
+	// create beside the tracked board must still be excluded, even though
+	// the board itself can't be — otherwise the first `sidecar diff` run
+	// litters git status.
+	if !strings.Contains(string(data), sidecarDirName+"/") {
+		t.Errorf("info/exclude missing %s/ snapshot dir for a tracked legacy board: %q", sidecarDirName, data)
+	}
 }
 
 // Issue #16: the reconcile reminder uses bare `sidecar` (not the path) when

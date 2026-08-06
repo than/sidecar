@@ -41,6 +41,7 @@ func runInit(args []string) int {
 			fmt.Println("  --no-claude    skip the CLAUDE.md note and reconcile hook")
 			fmt.Println("  --keep-board   leave a legacy root SIDECAR.md in place and point")
 			fmt.Println("                 init at it, instead of migrating to .sidecar/")
+			fmt.Println("                 (default board only — ignored with a custom path)")
 			fmt.Println("  --yes, -y      skip the section picker on a brand-new board")
 			return 0
 		default:
@@ -143,6 +144,11 @@ func runInit(args []string) int {
 		// "Added …" confirmation).
 		if _, tracked := git(filepath.Dir(abs), "ls-files", "--error-unmatch", legacyFile); tracked {
 			fmt.Printf("%s is tracked — run 'git rm --cached %s' to untrack it.\n", legacyFile, legacyFile)
+			// The board itself can't be excluded while tracked, but the
+			// .sidecar/ snapshot dir that `sidecar diff` will create beside
+			// it still needs to be — otherwise it litters git status on the
+			// very first diff.
+			excludeCustomPathSnapshotDir(filepath.Dir(abs), legacyFile)
 		} else {
 			gitExcludeDefault(abs)
 		}
