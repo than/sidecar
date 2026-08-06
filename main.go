@@ -22,7 +22,8 @@ usage: sidecar [file.md]         (default: .sidecar/sidecar.md)
        sidecar init --yes        skip the section picker (stays non-blocking)
        sidecar init --no-claude  skip the CLAUDE.md note and reconcile hook
        sidecar init --keep-board point init at a legacy root SIDECAR.md
-                                 instead of migrating it (default board only)
+                                 instead of migrating it (default board only;
+                                 no-op when .sidecar/sidecar.md already exists)
        sidecar diff [file.md]    print board changes since the last run
        sidecar --static [file]   render once to stdout and exit (no TUI)
        sidecar --no-flash [file] disable the subtle change-flash (▸ still shows)

@@ -41,7 +41,8 @@ func runInit(args []string) int {
 			fmt.Println("  --no-claude    skip the CLAUDE.md note and reconcile hook")
 			fmt.Println("  --keep-board   leave a legacy root SIDECAR.md in place and point")
 			fmt.Println("                 init at it, instead of migrating to .sidecar/")
-			fmt.Println("                 (default board only — ignored with a custom path)")
+			fmt.Println("                 (default board only — ignored with a custom path;")
+			fmt.Println("                 no-op when .sidecar/sidecar.md already exists)")
 			fmt.Println("  --yes, -y      skip the section picker on a brand-new board")
 			return 0
 		default:
@@ -142,13 +143,25 @@ func runInit(args []string) int {
 		// doesn't touch git history, so it points the human at the command
 		// instead of silently doing nothing (or printing a misleading
 		// "Added …" confirmation).
-		if _, tracked := git(filepath.Dir(abs), "ls-files", "--error-unmatch", legacyFile); tracked {
+		dir := filepath.Dir(abs)
+		if _, tracked := git(dir, "ls-files", "--error-unmatch", legacyFile); tracked {
 			fmt.Printf("%s is tracked — run 'git rm --cached %s' to untrack it.\n", legacyFile, legacyFile)
-			// The board itself can't be excluded while tracked, but the
-			// .sidecar/ snapshot dir that `sidecar diff` will create beside
-			// it still needs to be — otherwise it litters git status on the
-			// very first diff.
-			excludeCustomPathSnapshotDir(filepath.Dir(abs), legacyFile)
+			// Write the exclude entry anyway, silently — a no-op while the
+			// file stays tracked, but it takes effect the instant the human
+			// runs the command above, so there's nothing left to do then.
+			// rel is repo-relative, the same way gitExcludeDefault computes
+			// it, so this still lands correctly when cwd is a subdirectory
+			// of the repo.
+			if root, ok := git(dir, "rev-parse", "--show-toplevel"); ok {
+				if rel, err := filepath.Rel(root, abs); err == nil {
+					applyExcludeQuiet(dir, rel)
+					// The .sidecar/ snapshot dir that `sidecar diff` will
+					// create beside it still needs excluding out loud —
+					// otherwise it litters git status on the very first
+					// diff, tracked board or not.
+					excludeCustomPathSnapshotDir(dir, rel)
+				}
+			}
 		} else {
 			gitExcludeDefault(abs)
 		}
@@ -727,6 +740,20 @@ func gitExcludeDefault(fileAbs string) {
 // action behind both offerGitExclude's interactive "recommended" choice and
 // gitExcludeDefault's non-interactive default.
 func applyExcludeDefault(dir, rel string) {
+	applyExclude(dir, rel, true)
+}
+
+// applyExcludeQuiet is applyExcludeDefault without the "Added …" print — for
+// a caller that knows the entry is a no-op right now (rel names a file git
+// still tracks) but wants it in place regardless, so it takes effect the
+// moment that stops being true instead of requiring a second `sidecar init`.
+func applyExcludeQuiet(dir, rel string) {
+	applyExclude(dir, rel, false)
+}
+
+// applyExclude resolves dir's .git/info/exclude via git and appends rel to
+// it, printing the usual "Added …" confirmation when verbose.
+func applyExclude(dir, rel string, verbose bool) {
 	path, ok := git(dir, "rev-parse", "--git-path", "info/exclude")
 	if !ok {
 		fmt.Fprintln(os.Stderr, "could not locate .git/info/exclude")
@@ -735,7 +762,7 @@ func applyExcludeDefault(dir, rel string) {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(dir, path)
 	}
-	writeIgnore(path, rel, true)
+	writeIgnore(path, rel, verbose)
 }
 
 // excludeCustomPathSnapshotDir excludes the .sidecar/ directory that will

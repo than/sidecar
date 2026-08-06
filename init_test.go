@@ -285,8 +285,10 @@ func TestRunInitHelpDocumentsYesSkipsPicker(t *testing.T) {
 	if !strings.Contains(out, "skip the section picker") {
 		t.Errorf("help text doesn't document --yes/-y as skipping the picker:\n%s", out)
 	}
-	if strings.Contains(out, "no-op") {
-		t.Errorf("help text still calls --yes/-y a no-op:\n%s", out)
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "--yes") && strings.Contains(line, "no-op") {
+			t.Errorf("--yes/-y help line still calls it a no-op: %q", line)
+		}
 	}
 }
 
@@ -1014,12 +1016,15 @@ func TestInitKeepBoardTrackedLegacyPrintsUntrackHint(t *testing.T) {
 	if !strings.Contains(out, "SIDECAR.md is tracked — run 'git rm --cached SIDECAR.md' to untrack it.") {
 		t.Errorf("missing untrack hint:\n%s", out)
 	}
+	// Round 4, AA1: the entry is still written — silently, since it's a
+	// no-op while the file stays tracked but takes effect the instant the
+	// human runs the untrack command above.
 	if strings.Contains(out, `Added "SIDECAR.md"`) {
 		t.Errorf("printed a misleading exclude confirmation for a tracked file:\n%s", out)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
-	if strings.Contains(string(data), "SIDECAR.md") {
-		t.Errorf("wrote a no-op exclude entry for a tracked file: %q", data)
+	if !strings.Contains(string(data), "SIDECAR.md") {
+		t.Errorf("info/exclude missing SIDECAR.md — entry should be written (silently) even while tracked: %q", data)
 	}
 	// Round 3, Z1: the .sidecar/ snapshot dir that `sidecar diff` will
 	// create beside the tracked board must still be excluded, even though
@@ -1027,6 +1032,41 @@ func TestInitKeepBoardTrackedLegacyPrintsUntrackHint(t *testing.T) {
 	// litters git status.
 	if !strings.Contains(string(data), sidecarDirName+"/") {
 		t.Errorf("info/exclude missing %s/ snapshot dir for a tracked legacy board: %q", sidecarDirName, data)
+	}
+}
+
+// Round 4, AA2: the exclude entry (and the snapshot-dir entry) must be
+// repo-relative, the same way gitExcludeDefault computes it — otherwise
+// running --keep-board on a tracked legacy board from a repo subdirectory
+// writes a bare "SIDECAR.md" / ".sidecar/" that doesn't match the file's
+// actual repo-relative path.
+func TestInitKeepBoardTrackedLegacyFromSubdirUsesRepoRelativePath(t *testing.T) {
+	root := t.TempDir()
+	mustRun(t, root, "git", "init", "-q")
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- tracked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, root, "git", "add", "sub/SIDECAR.md")
+
+	withWorkDir(t, sub, func() {
+		withStdin(t, "", func() {
+			captureStdout(t, func() {
+				if code := runInit([]string{"--keep-board"}); code != 0 {
+					t.Fatalf("exit = %d", code)
+				}
+			})
+		})
+	})
+	data, _ := os.ReadFile(filepath.Join(root, ".git", "info", "exclude"))
+	if !strings.Contains(string(data), filepath.Join("sub", "SIDECAR.md")) {
+		t.Errorf("info/exclude missing repo-relative sub/SIDECAR.md: %q", data)
+	}
+	if !strings.Contains(string(data), filepath.Join("sub", sidecarDirName)+"/") {
+		t.Errorf("info/exclude missing repo-relative sub/%s/: %q", sidecarDirName, data)
 	}
 }
 
