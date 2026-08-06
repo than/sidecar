@@ -352,7 +352,14 @@ func reconcileHookEntry(rel string, sections []Section) map[string]any {
 	if rel != filepath.Join(sidecarDirName, "sidecar.md") {
 		diffCmd += " " + shSingleQuote(rel)
 	}
-	cmd := "command -v sidecar >/dev/null 2>&1 && " + diffCmd + " || echo " + shSingleQuote(reconcileMessage(rel, sections))
+	// `command -v sidecar` only proves a binary named sidecar exists, not
+	// that it has the diff subcommand — an older sidecar falls into viewer
+	// mode on `sidecar diff` (treating "diff" as a board path) and can hang
+	// a TTY-inheriting hook. Probe the actual feature instead: `--help`
+	// exits 0 fast on a binary that has it, and </dev/null forces an old
+	// binary's viewer-mode fallback to fail fast on stdin rather than hang.
+	probe := "sidecar diff --help </dev/null >/dev/null 2>&1"
+	cmd := probe + " && " + diffCmd + " || echo " + shSingleQuote(reconcileMessage(rel, sections))
 	return map[string]any{
 		"hooks": []any{
 			map[string]any{"type": "command", "command": cmd},

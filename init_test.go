@@ -433,11 +433,22 @@ func TestOfferGitExcludeGitignoreBranchExcludesSnapshotDir(t *testing.T) {
 	}
 }
 
+// T3: the guard must prove the installed sidecar actually has the diff
+// subcommand (an old binary falls into viewer mode on `sidecar diff` and can
+// hang a TTY-inheriting hook) — `command -v sidecar` alone doesn't prove
+// that. The probe itself must redirect stdin from /dev/null so an old
+// binary's viewer-mode fallback fails fast instead of hanging on the probe.
 func TestReconcileHookEntryGuarded(t *testing.T) {
 	entry := reconcileHookEntry(filepath.Join(sidecarDirName, "sidecar.md"), defaultSections())
 	cmd := entry["hooks"].([]any)[0].(map[string]any)["command"].(string)
-	if !strings.Contains(cmd, "command -v sidecar") || !strings.Contains(cmd, "sidecar diff") {
-		t.Errorf("hook not guarded: %q", cmd)
+	if !strings.Contains(cmd, "sidecar diff --help") {
+		t.Errorf("hook not guarded by a real feature probe: %q", cmd)
+	}
+	if !strings.Contains(cmd, "</dev/null") {
+		t.Errorf("probe missing </dev/null redirect (old binary could hang): %q", cmd)
+	}
+	if !strings.Contains(cmd, "sidecar diff") {
+		t.Errorf("hook missing the actual diff invocation: %q", cmd)
 	}
 	if !strings.Contains(cmd, hookSentinel) {
 		t.Errorf("hook fallback lost the sentinel: %q", cmd)
