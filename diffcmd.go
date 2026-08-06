@@ -67,7 +67,10 @@ func defaultBoardPath() string {
 }
 
 // snapshotPath is .sidecar/previous.md for the standard board, and a
-// path-keyed previous-<hash>.md beside it for explicit board files.
+// path-keyed previous-<hash>.md beside it for explicit board files. When the
+// board's own parent dir is already named .sidecar (e.g. .sidecar/notes.md),
+// the keyed snapshot goes directly in that dir rather than doubling it up
+// into .sidecar/.sidecar/.
 func snapshotPath(boardAbs string) string {
 	dir := filepath.Dir(boardAbs)
 	if filepath.Base(dir) == sidecarDirName && filepath.Base(boardAbs) == "sidecar.md" {
@@ -75,7 +78,11 @@ func snapshotPath(boardAbs string) string {
 	}
 	h := fnv.New32a()
 	h.Write([]byte(boardAbs))
-	return filepath.Join(dir, sidecarDirName, fmt.Sprintf("previous-%08x.md", h.Sum32()))
+	name := fmt.Sprintf("previous-%08x.md", h.Sum32())
+	if filepath.Base(dir) == sidecarDirName {
+		return filepath.Join(dir, name)
+	}
+	return filepath.Join(dir, sidecarDirName, name)
 }
 
 // writeSnapshot advances the snapshot, keeping exit 0 even when it fails (a

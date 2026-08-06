@@ -191,6 +191,44 @@ func TestRunDiffExplicitPathKeyedSnapshot(t *testing.T) {
 	}
 }
 
+// P3: a board already living inside .sidecar/ but not named sidecar.md
+// (e.g. .sidecar/notes.md) must not double up the directory into
+// .sidecar/.sidecar/previous-<hash>.md — the snapshot belongs directly
+// alongside it.
+func TestSnapshotPathInsideSidecarDirNotNamedSidecarMd(t *testing.T) {
+	boardAbs := filepath.Join("/repo", sidecarDirName, "notes.md")
+	got := snapshotPath(boardAbs)
+	if strings.Contains(got, filepath.Join(sidecarDirName, sidecarDirName)) {
+		t.Errorf("snapshotPath doubled up the .sidecar dir: %q", got)
+	}
+	wantDir := filepath.Join("/repo", sidecarDirName)
+	if filepath.Dir(got) != wantDir {
+		t.Errorf("snapshot dir = %q, want %q", filepath.Dir(got), wantDir)
+	}
+	if !strings.HasPrefix(filepath.Base(got), "previous-") {
+		t.Errorf("snapshot base = %q, want previous-<hash>.md", filepath.Base(got))
+	}
+}
+
+// P3 end-to-end: running `sidecar diff .sidecar/notes.md` must not create a
+// nested .sidecar/.sidecar/ directory.
+func TestRunDiffCustomBoardInsideSidecarDirNoDoubleNesting(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, sidecarDirName), 0o755)
+	board := filepath.Join(dir, sidecarDirName, "notes.md")
+	os.WriteFile(board, []byte(diffBoardV1), 0o644)
+	withWorkDir(t, dir, func() {
+		captureStdout(t, func() { runDiff([]string{filepath.Join(sidecarDirName, "notes.md")}) })
+	})
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, sidecarDirName)); err == nil {
+		t.Error("nested .sidecar/.sidecar/ directory was created")
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, sidecarDirName, "previous-*.md"))
+	if len(matches) != 1 {
+		t.Fatalf("keyed snapshot files = %v, want exactly 1 directly in .sidecar/", matches)
+	}
+}
+
 func TestDefaultBoardPathPrefersSidecarDir(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, sidecarDirName), 0o755)
