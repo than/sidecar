@@ -70,10 +70,22 @@ type model struct {
 	lineFlash     bool         // subtle line-bg flash active
 	noFlash       bool         // --no-flash: suppress the line flash
 	flashGen      int          // bumped on each change; a stale flash-off msg is ignored
+
+	// Section collapse — rendering-only, never written back to the file.
+	// board is the last successful parseBoard result; collapsed is keyed by
+	// BoardSection.Label and persists in-memory across reloads within a run
+	// (see seedDefaults, collapse.go). cursor is which section Tab/Shift+Tab
+	// is on, -1 meaning "no board parsed" (headerLines is then empty too, so
+	// applyCursorHighlight is a no-op regardless). headerLines maps section
+	// index to its rendered line index (sectionHeaderLines, diff.go).
+	board       Board
+	collapsed   map[string]bool
+	cursor      int
+	headerLines []int
 }
 
 func newModel(path string, noFlash bool) model {
-	return model{path: path, noFlash: noFlash}
+	return model{path: path, noFlash: noFlash, collapsed: map[string]bool{}, cursor: -1}
 }
 
 func (m model) Init() tea.Cmd {
@@ -236,7 +248,28 @@ func (m *model) reload(force bool) (changed bool) {
 		m.prevBaseline = raw
 	}
 
-	rendered, err := renderMarkdown(raw, m.renderWidth())
+	// Section collapse is rendering-only: parse the board, seed any new
+	// section labels' default collapse state, clamp the cursor to the
+	// current section count, then rewrite what actually reaches glamour.
+	board, boardOK := parseBoard(raw)
+	if boardOK {
+		m.board = board
+		seedDefaults(board, m.collapsed)
+		if m.cursor < 0 {
+			m.cursor = 0
+		} else if m.cursor >= len(board.Sections) {
+			m.cursor = len(board.Sections) - 1
+		}
+	} else {
+		m.board = Board{}
+		m.cursor = -1
+	}
+	displayRaw := raw
+	if boardOK {
+		displayRaw = applyCollapse(raw, board, m.collapsed)
+	}
+
+	rendered, err := renderMarkdown(displayRaw, m.renderWidth())
 	if err != nil {
 		m.loadErr = err
 		m.vp.SetContent(fmt.Sprintf("\n  Render error: %v", err))
@@ -247,25 +280,40 @@ func (m *model) reload(force bool) (changed bool) {
 		return false
 	}
 	lines := strings.Split(rendered, "\n")
+	m.headerLines = sectionHeaderLines(lines)
 
 	var changedMap map[int]bool
 	if m.hasBaseline {
 		// Deliberate degrade: if the baseline fails to render we show no
 		// markers this pass rather than surface an error — the content render
-		// above already succeeded.
-		if base, berr := renderMarkdown(m.prevBaseline, m.renderWidth()); berr == nil {
+		// above already succeeded. The baseline is rendered through the same
+		// collapse rewrite, using the *current* collapsed state — collapse is
+		// a live viewer setting, not a property of any one file revision.
+		baseDisplay := m.prevBaseline
+		if baseBoard, ok := parseBoard(m.prevBaseline); ok {
+			baseDisplay = applyCollapse(m.prevBaseline, baseBoard, m.collapsed)
+		}
+		if base, berr := renderMarkdown(baseDisplay, m.renderWidth()); berr == nil {
 			changedMap = changedLines(strings.Split(base, "\n"), lines)
 		}
 	}
 	m.renderedLines = lines
 	m.changed = changedMap
 
-	display := composeMarked(lines, changedMap, m.lineFlash && !m.noFlash, m.renderWidth())
+	display := m.compose()
 	offset := m.vp.YOffset
 	m.vp.SetContent(display)
 	m.vp.SetYOffset(offset)
 	m.hasBaseline = true
 	return contentChanged
+}
+
+// compose renders the current cached lines through both overlays — the
+// changed/flash marking (composeMarked) and the section-cursor highlight
+// (applyCursorHighlight) — at the current flash and cursor state.
+func (m *model) compose() string {
+	display := composeMarked(m.renderedLines, m.changed, m.lineFlash && !m.noFlash, m.renderWidth())
+	return applyCursorHighlight(display, m.headerLines, m.cursor, m.renderWidth())
 }
 
 // recompose re-renders the cached lines for the current flash state without
@@ -274,9 +322,30 @@ func (m *model) recompose() {
 	if m.renderedLines == nil || m.fileMissing || m.loadErr != nil {
 		return
 	}
-	display := composeMarked(m.renderedLines, m.changed, m.lineFlash && !m.noFlash, m.renderWidth())
+	display := m.compose()
 	offset := m.vp.YOffset
 	m.vp.SetContent(display)
+	m.vp.SetYOffset(offset)
+}
+
+// rerenderCollapse re-renders m.raw with the current m.collapsed state,
+// without touching the baseline or triggering the reload flash — toggling
+// a section isn't a "the file changed on disk" event. A no-op before the
+// first successful load.
+func (m *model) rerenderCollapse() {
+	if !m.ready || m.fileMissing || m.loadErr != nil || len(m.board.Sections) == 0 {
+		return
+	}
+	displayRaw := applyCollapse(m.raw, m.board, m.collapsed)
+	rendered, err := renderMarkdown(displayRaw, m.renderWidth())
+	if err != nil {
+		return // m.raw already rendered fine on the last successful reload
+	}
+	m.renderedLines = strings.Split(rendered, "\n")
+	m.headerLines = sectionHeaderLines(m.renderedLines)
+	m.changed = nil
+	offset := m.vp.YOffset
+	m.vp.SetContent(m.compose())
 	m.vp.SetYOffset(offset)
 }
 

@@ -402,3 +402,78 @@ func TestUpdatePointerRKeyBeforeChangeUnmarked(t *testing.T) {
 		t.Errorf("r before any change should mark nothing:\n%s", stripANSI(m.vp.View()))
 	}
 }
+
+// Header shows the item count even before anything is collapsed.
+func TestHeaderShowsItemCount(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, path, "## 🧠 Needs action\n\n- Review PR #7\n\n## ✅ Done\n\n- nothing yet\n")
+	m := testModel(t, path)
+	m.reload(true)
+
+	out := stripANSI(m.vp.View())
+	if !strings.Contains(out, "Needs action (1)") {
+		t.Errorf("want item count in heading:\n%s", out)
+	}
+	if !strings.Contains(out, "Done (0)") {
+		t.Errorf("want (0) count on empty Done:\n%s", out)
+	}
+}
+
+// ✅ Done defaults collapsed — its item shouldn't render at all.
+func TestDoneDefaultsCollapsed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, path, "## 🧠 Needs action\n\n- Review PR #7\n\n## ✅ Done\n\n- Shipped thing\n")
+	m := testModel(t, path)
+	m.reload(true)
+
+	out := stripANSI(m.vp.View())
+	if strings.Contains(out, "Shipped thing") {
+		t.Errorf("Done should default collapsed:\n%s", out)
+	}
+	if !strings.Contains(out, "Review PR #7") {
+		t.Errorf("Needs action should default expanded:\n%s", out)
+	}
+}
+
+// Non-default sections default expanded.
+func TestNeedsActionDefaultsExpanded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, path, "## 🚧 In progress\n\n- Ship v2\n")
+	m := testModel(t, path)
+	m.reload(true)
+
+	if !strings.Contains(stripANSI(m.vp.View()), "Ship v2") {
+		t.Error("In progress should default expanded")
+	}
+}
+
+// Collapse state, once toggled, survives a reload triggered by an
+// unrelated edit elsewhere in the file.
+func TestCollapseStateSurvivesReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, path, "## 🧠 Needs action\n\n- x\n\n## ✅ Done\n\n- old\n")
+	m := testModel(t, path)
+	m.reload(true)
+	m.collapsed["🧠 Needs action"] = true // manually expand-collapse to test persistence path
+	m.rerenderCollapse()
+
+	writeFile(t, path, "## 🧠 Needs action\n\n- x\n\n## ✅ Done\n\n- old\n- new\n")
+	m.reload(false)
+
+	out := stripANSI(m.vp.View())
+	if strings.Contains(out, "- x") {
+		t.Errorf("Needs action should still be collapsed after reload:\n%s", out)
+	}
+}
+
+// A file with no "## " headings is untouched by collapse machinery.
+func TestNoHeadingsFileUnaffected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, path, "# Title\n\njust some notes, no sections\n")
+	m := testModel(t, path)
+	m.reload(true)
+
+	if !strings.Contains(stripANSI(m.vp.View()), "just some notes") {
+		t.Error("plain file should render unchanged")
+	}
+}
