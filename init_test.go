@@ -224,6 +224,52 @@ func TestClaudeNoteCustomSections(t *testing.T) {
 
 // The non-interactive path must still write the default template and must
 // NOT start a picker (tests aren't a TTY).
+// Q2: an unknown flag must not be silently treated as a filename — it must
+// be rejected, not create a file named after the flag.
+func TestRunInitUnknownFlagRejected(t *testing.T) {
+	dir := t.TempDir()
+	withWorkDir(t, dir, func() {
+		var code int
+		errOut := captureStderr(t, func() {
+			captureStdout(t, func() {
+				code = runInit([]string{"--dry-run"})
+			})
+		})
+		if code != 2 {
+			t.Errorf("exit = %d, want 2", code)
+		}
+		if !strings.Contains(errOut, `unknown flag "--dry-run"`) {
+			t.Errorf("stderr = %q, want it to mention the unknown flag", errOut)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "--dry-run")); err == nil {
+			t.Error("a file named after the unknown flag was created")
+		}
+	})
+}
+
+// Q4: `sidecar init -h`/`--help` must print usage and exit 0, not fall
+// through to the unknown-flag rejection.
+func TestRunInitHelpFlag(t *testing.T) {
+	for _, flag := range []string{"-h", "--help"} {
+		dir := t.TempDir()
+		withWorkDir(t, dir, func() {
+			var code int
+			out := captureStdout(t, func() {
+				code = runInit([]string{flag})
+			})
+			if code != 0 {
+				t.Errorf("%s: exit = %d, want 0", flag, code)
+			}
+			if !strings.Contains(out, "usage: sidecar init") {
+				t.Errorf("%s: out = %q, want usage line", flag, out)
+			}
+			if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err == nil {
+				t.Errorf("%s: board was created instead of just printing help", flag)
+			}
+		})
+	}
+}
+
 func TestInitNonInteractiveUsesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "SIDECAR.md")

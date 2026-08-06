@@ -22,7 +22,15 @@ func runInit(args []string) int {
 		switch a {
 		case "--yes", "-y":
 			assumeYes = true
+		case "-h", "--help":
+			fmt.Println("usage: sidecar init [file.md]")
+			fmt.Println("Creates the board and wires it into Claude Code.")
+			return 0
 		default:
+			if strings.HasPrefix(a, "-") {
+				fmt.Fprintf(os.Stderr, "sidecar init: unknown flag %q\n", a)
+				return 2
+			}
 			rest = append(rest, a)
 		}
 	}
