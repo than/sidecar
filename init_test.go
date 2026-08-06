@@ -3,10 +3,20 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func mustRun(t *testing.T, dir string, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%s %v: %v\n%s", name, args, err, out)
+	}
+}
 
 // runInit scaffolds the file with the starter template when it's absent, and
 // (outside a git work tree) doesn't touch stdin.
@@ -56,7 +66,7 @@ func TestWriteClaudeNoteAppendsAndDedupes(t *testing.T) {
 	writeClaudeNote(root, "SIDECAR.md", defaultSections())
 	data, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
 	got := string(data)
-	for _, want := range []string{"# Existing", claudeNoteMarker, "sidecar SIDECAR.md", "go install github.com/than/sidecar@latest", "🧠"} {
+	for _, want := range []string{"# Existing", claudeNoteMarker, "Maintain `SIDECAR.md`", "go install github.com/than/sidecar@latest", "🧠"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("CLAUDE.md missing %q:\n%s", want, got)
 		}
@@ -201,7 +211,7 @@ func TestClaudeNoteCustomSections(t *testing.T) {
 		claudeNoteMarker,
 		"- `## 🧠 Needs action` — for the human",
 		"`## Todo`",
-		"sidecar SIDECAR.md",
+		"Maintain `SIDECAR.md`",
 	} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note missing %q:\n%s", want, note)
@@ -214,6 +224,52 @@ func TestClaudeNoteCustomSections(t *testing.T) {
 
 // The non-interactive path must still write the default template and must
 // NOT start a picker (tests aren't a TTY).
+// Q2: an unknown flag must not be silently treated as a filename — it must
+// be rejected, not create a file named after the flag.
+func TestRunInitUnknownFlagRejected(t *testing.T) {
+	dir := t.TempDir()
+	withWorkDir(t, dir, func() {
+		var code int
+		errOut := captureStderr(t, func() {
+			captureStdout(t, func() {
+				code = runInit([]string{"--dry-run"})
+			})
+		})
+		if code != 2 {
+			t.Errorf("exit = %d, want 2", code)
+		}
+		if !strings.Contains(errOut, `unknown flag "--dry-run"`) {
+			t.Errorf("stderr = %q, want it to mention the unknown flag", errOut)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "--dry-run")); err == nil {
+			t.Error("a file named after the unknown flag was created")
+		}
+	})
+}
+
+// Q4: `sidecar init -h`/`--help` must print usage and exit 0, not fall
+// through to the unknown-flag rejection.
+func TestRunInitHelpFlag(t *testing.T) {
+	for _, flag := range []string{"-h", "--help"} {
+		dir := t.TempDir()
+		withWorkDir(t, dir, func() {
+			var code int
+			out := captureStdout(t, func() {
+				code = runInit([]string{flag})
+			})
+			if code != 0 {
+				t.Errorf("%s: exit = %d, want 0", flag, code)
+			}
+			if !strings.Contains(out, "usage: sidecar init") {
+				t.Errorf("%s: out = %q, want usage line", flag, out)
+			}
+			if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err == nil {
+				t.Errorf("%s: board was created instead of just printing help", flag)
+			}
+		})
+	}
+}
+
 func TestInitNonInteractiveUsesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "SIDECAR.md")
@@ -236,5 +292,544 @@ func TestReconcileMessageCustomSections(t *testing.T) {
 	}
 	if !strings.Contains(msg, hookSentinel) {
 		t.Errorf("reconcile message missing sentinel:\n%s", msg)
+	}
+}
+
+// R4: an empty labels list (unparseable board) must drop the " Sections: …"
+// clause entirely rather than render "Sections: .", while keeping the
+// sentinel phrase intact.
+func TestReconcileMessageLabelsEmptyDropsSectionsClause(t *testing.T) {
+	msg := reconcileMessageLabels("SIDECAR.md", nil)
+	if strings.Contains(msg, "Sections:") {
+		t.Errorf("expected no Sections clause for empty labels:\n%s", msg)
+	}
+	if !strings.Contains(msg, hookSentinel) {
+		t.Errorf("reconcile message missing sentinel:\n%s", msg)
+	}
+}
+
+func TestExcludeSidecarDir(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	excludeSidecarDir(dir, true)
+	data, err := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if err != nil || !strings.Contains(string(data), ".sidecar/") {
+		t.Fatalf("info/exclude = %q, err %v", data, err)
+	}
+	// Idempotent: a second call adds nothing.
+	excludeSidecarDir(dir, true)
+	again, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if strings.Count(string(again), ".sidecar/") != 1 {
+		t.Errorf("exclude entry duplicated:\n%s", again)
+	}
+}
+
+// Q3: excludeSidecarDir must print the same confirmation line every other
+// exclude path prints, instead of succeeding silently — when verbose.
+func TestExcludeSidecarDirPrintsConfirmation(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	out := captureStdout(t, func() { excludeSidecarDir(dir, true) })
+	if !strings.Contains(out, `Added ".sidecar/"`) {
+		t.Errorf("out = %q, want a confirmation line like the other exclude paths", out)
+	}
+}
+
+// The residual from re-review: writeSnapshot's fresh-dir exclusion runs on
+// every plain `sidecar diff` hook invocation and must stay silent on stdout.
+func TestExcludeSidecarDirQuietPrintsNothing(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	out := captureStdout(t, func() { excludeSidecarDir(dir, false) })
+	if out != "" {
+		t.Errorf("out = %q, want no stdout output when verbose=false", out)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if err != nil || !strings.Contains(string(data), ".sidecar/") {
+		t.Fatalf("info/exclude = %q, err %v — the exclude itself must still happen", data, err)
+	}
+}
+
+// S1: a custom board resident inside .sidecar/ (e.g. .sidecar/notes.md) must
+// route to the automatic .sidecar/-dir exclude, never the custom-path
+// prompt — reachable directly via offerGitExclude (e.g. from offerCreate in
+// viewer mode), not just through runInit's own top-level guard.
+func TestOfferGitExcludeSidecarResidentPathAutomatic(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	sidecarDir := filepath.Join(dir, sidecarDirName)
+	os.MkdirAll(sidecarDir, 0o755)
+	target := filepath.Join(sidecarDir, "notes.md")
+	os.WriteFile(target, []byte("# notes\n"), 0o644)
+
+	out := withStdinCapture(t, "", func() { offerGitExclude(target) })
+	if strings.Contains(out, "Keep") && strings.Contains(out, "out of git?") {
+		t.Errorf("prompted for a .sidecar/-resident path:\n%s", out)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if !strings.Contains(string(data), sidecarDirName+"/") {
+		t.Errorf("info/exclude missing %s/: %q", sidecarDirName, data)
+	}
+	if strings.Contains(string(data), "notes.md") {
+		t.Errorf("info/exclude should hold the whole %s/ dir, not the file itself: %q", sidecarDirName, data)
+	}
+}
+
+// S1: same guard for the non-interactive (--yes) path.
+func TestGitExcludeDefaultSidecarResidentPathAutomatic(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	sidecarDir := filepath.Join(dir, sidecarDirName)
+	os.MkdirAll(sidecarDir, 0o755)
+	target := filepath.Join(sidecarDir, "notes.md")
+	os.WriteFile(target, []byte("# notes\n"), 0o644)
+
+	gitExcludeDefault(target)
+	data, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if !strings.Contains(string(data), sidecarDirName+"/") {
+		t.Errorf("info/exclude missing %s/: %q", sidecarDirName, data)
+	}
+	if strings.Contains(string(data), "notes.md") {
+		t.Errorf("info/exclude should hold the whole %s/ dir, not the file itself: %q", sidecarDirName, data)
+	}
+}
+
+// withStdinCapture combines withStdin and captureStdout: runs f with stdin
+// set to input and returns whatever f printed.
+func withStdinCapture(t *testing.T, input string, f func()) string {
+	t.Helper()
+	var out string
+	withStdin(t, input, func() {
+		out = captureStdout(t, f)
+	})
+	return out
+}
+
+// withStdin redirects os.Stdin to input for the duration of f, restoring it
+// afterward.
+func withStdin(t *testing.T, input string, f func()) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.WriteString(input); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	old := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = old }()
+	f()
+}
+
+// R3: the [g] .gitignore branch of offerGitExclude must also exclude the
+// .sidecar/ snapshot dir that `sidecar diff` creates beside a custom board
+// path — not just the board file itself.
+func TestOfferGitExcludeGitignoreBranchExcludesSnapshotDir(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	target := filepath.Join(dir, "notes.md")
+	os.WriteFile(target, []byte("# notes\n"), 0o644)
+
+	withStdin(t, "g\n", func() {
+		offerGitExclude(target)
+	})
+
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if !strings.Contains(string(data), "notes.md") {
+		t.Errorf(".gitignore missing board file: %q", data)
+	}
+	if !strings.Contains(string(data), sidecarDirName+"/") {
+		t.Errorf(".gitignore missing %s/ snapshot dir: %q", sidecarDirName, data)
+	}
+}
+
+// T3: the guard must prove the installed sidecar actually has the diff
+// subcommand (an old binary falls into viewer mode on `sidecar diff` and can
+// hang a TTY-inheriting hook) — `command -v sidecar` alone doesn't prove
+// that. The probe itself must redirect stdin from /dev/null so an old
+// binary's viewer-mode fallback fails fast instead of hanging on the probe.
+func TestReconcileHookEntryGuarded(t *testing.T) {
+	entry := reconcileHookEntry(filepath.Join(sidecarDirName, "sidecar.md"), defaultSections())
+	cmd := entry["hooks"].([]any)[0].(map[string]any)["command"].(string)
+	if !strings.Contains(cmd, "sidecar diff --help") {
+		t.Errorf("hook not guarded by a real feature probe: %q", cmd)
+	}
+	if !strings.Contains(cmd, "</dev/null") {
+		t.Errorf("probe missing </dev/null redirect (old binary could hang): %q", cmd)
+	}
+	if !strings.Contains(cmd, "sidecar diff") {
+		t.Errorf("hook missing the actual diff invocation: %q", cmd)
+	}
+	if !strings.Contains(cmd, hookSentinel) {
+		t.Errorf("hook fallback lost the sentinel: %q", cmd)
+	}
+	if strings.Contains(cmd, "sidecar diff '") {
+		t.Errorf("default board should not pass an explicit path: %q", cmd)
+	}
+}
+
+func TestReconcileHookEntryCustomPathPassed(t *testing.T) {
+	entry := reconcileHookEntry("NOTES.md", defaultSections())
+	cmd := entry["hooks"].([]any)[0].(map[string]any)["command"].(string)
+	if !strings.Contains(cmd, "sidecar diff 'NOTES.md'") {
+		t.Errorf("custom path missing from hook: %q", cmd)
+	}
+}
+
+func TestReplaceClaudeNote(t *testing.T) {
+	old := "# My project\n\n<!-- sidecar:review-queue -->\nold sidecar text\n<!-- /sidecar:review-queue -->\n\n## Other section\n"
+	note := claudeNote(filepath.Join(sidecarDirName, "sidecar.md"), defaultSections())
+	got, replaced := replaceClaudeNote(old, note)
+	if !replaced {
+		t.Fatal("expected replacement")
+	}
+	if strings.Contains(got, "old sidecar text") {
+		t.Error("stale note survived")
+	}
+	if !strings.Contains(got, ".sidecar/sidecar.md") || !strings.Contains(got, "# My project") || !strings.Contains(got, "## Other section") {
+		t.Errorf("replacement damaged surrounding content:\n%s", got)
+	}
+}
+
+func TestReplaceClaudeNoteNoMarker(t *testing.T) {
+	if _, replaced := replaceClaudeNote("# Plain file\n", "note"); replaced {
+		t.Error("replaced without a marker")
+	}
+}
+
+func TestClaudeNoteWritingRules(t *testing.T) {
+	note := claudeNote(filepath.Join(sidecarDirName, "sidecar.md"), defaultSections())
+	for _, want := range []string{"Apple Developer documentation voice", "two sentences of detail", "bare URLs, each on its own line", "`Next:` line"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note missing %q", want)
+		}
+	}
+}
+
+func TestMigrateLegacyBoard(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- carry me over\n"), 0o644)
+	mustRun(t, dir, "git", "add", "SIDECAR.md")
+
+	if !migrateLegacyBoard(dir, true) {
+		t.Fatal("expected migration")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, sidecarDirName, "sidecar.md"))
+	if err != nil || !strings.Contains(string(data), "carry me over") {
+		t.Fatalf("board content lost: %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "SIDECAR.md")); !os.IsNotExist(err) {
+		t.Error("legacy file still present")
+	}
+	// No longer tracked.
+	cmd := exec.Command("git", "ls-files", "--error-unmatch", "SIDECAR.md")
+	cmd.Dir = dir
+	if cmd.Run() == nil {
+		t.Error("SIDECAR.md still tracked after migration")
+	}
+}
+
+func TestMigrateLegacyBoardUntracked(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- local only\n"), 0o644)
+	if !migrateLegacyBoard(dir, true) {
+		t.Fatal("expected migration of an untracked board")
+	}
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err != nil {
+		t.Error("board not moved")
+	}
+}
+
+// T1: without --yes and without a TTY to answer the prompt (e.g. a hook's
+// piped/EOF stdin), migrateLegacyBoard must leave the legacy board alone —
+// readChoice() on EOF returns "", which defaults to yes and would otherwise
+// rename a file no one agreed to move.
+func TestMigrateLegacyBoardNoTTYLeavesLegacyAlone(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- carry me over\n"), 0o644)
+
+	// go test's own stdin is not a terminal, matching the hook scenario —
+	// no explicit redirect needed, but withStdin("") makes the EOF condition
+	// explicit and reproducible regardless of how the test binary is run.
+	var migrated bool
+	withStdin(t, "", func() {
+		migrated = migrateLegacyBoard(dir, false)
+	})
+	if migrated {
+		t.Error("migrated with no TTY to answer the prompt")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "SIDECAR.md")); err != nil {
+		t.Error("legacy board was moved despite no TTY")
+	}
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err == nil {
+		t.Error("new board created despite no TTY to confirm migration")
+	}
+}
+
+func TestMigrateLegacyBoardNothingToDo(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	if migrateLegacyBoard(dir, true) {
+		t.Error("migrated with no legacy file present")
+	}
+}
+
+// F1: re-running init against an existing board with custom sections must
+// derive the note/hook sections from the board itself, not the default five.
+func TestRunInitExistingBoardKeepsCustomSections(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	board := "## 🔥 Hot\n\n- nothing yet\n\n## 🧊 Cold\n\n- nothing yet\n"
+	if err := os.MkdirAll(filepath.Join(dir, sidecarDirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, sidecarDirName, "sidecar.md"), []byte(board), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withWorkDir(t, dir, func() {
+		if code := runInit([]string{"--yes"}); code != 0 {
+			t.Fatalf("exit = %d", code)
+		}
+	})
+	claude, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	for _, want := range []string{"🔥 Hot", "🧊 Cold"} {
+		if !strings.Contains(string(claude), want) {
+			t.Errorf("CLAUDE.md note missing %q:\n%s", want, claude)
+		}
+	}
+	for _, unwanted := range []string{"Needs action", "In progress", "Parked"} {
+		if strings.Contains(string(claude), unwanted) {
+			t.Errorf("CLAUDE.md note kept default section %q:\n%s", unwanted, claude)
+		}
+	}
+	settings, _ := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if !strings.Contains(string(settings), "🔥 Hot / 🧊 Cold") {
+		t.Errorf("hook fallback missing custom sections:\n%s", settings)
+	}
+}
+
+// F2: the closing hint prints bare "sidecar" for the default board, and the
+// path as given for a custom one.
+func TestWatchItHint(t *testing.T) {
+	dir2 := t.TempDir()
+	mustRun(t, dir2, "git", "init", "-q")
+	withWorkDir(t, dir2, func() {
+		out := captureStdout(t, func() {
+			if code := runInit([]string{"--yes"}); code != 0 {
+				t.Fatalf("exit = %d", code)
+			}
+		})
+		if !strings.Contains(out, "Watch it:  sidecar\n") {
+			t.Errorf("default target should print bare 'sidecar':\n%s", out)
+		}
+	})
+
+	dir3 := t.TempDir()
+	mustRun(t, dir3, "git", "init", "-q")
+	withWorkDir(t, dir3, func() {
+		out := captureStdout(t, func() {
+			if code := runInit([]string{"notes.md", "--yes"}); code != 0 {
+				t.Fatalf("exit = %d", code)
+			}
+		})
+		if !strings.Contains(out, "Watch it:  sidecar notes.md\n") {
+			t.Errorf("custom target should print the given path:\n%s", out)
+		}
+	})
+}
+
+// F3: init from a subdirectory of a repo with a root-level SIDECAR.md must
+// not migrate it — migration only applies when the target's cwd is the
+// directory holding the legacy file.
+func TestInitFromSubdirDoesNotMigrateRootBoard(t *testing.T) {
+	root := t.TempDir()
+	mustRun(t, root, "git", "init", "-q")
+	if err := os.WriteFile(filepath.Join(root, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- root board\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withWorkDir(t, sub, func() {
+		if code := runInit([]string{"--yes"}); code != 0 {
+			t.Fatalf("exit = %d", code)
+		}
+	})
+	if _, err := os.Stat(filepath.Join(root, "SIDECAR.md")); err != nil {
+		t.Error("root SIDECAR.md was moved/removed from a subdir init")
+	}
+	if _, err := os.Stat(filepath.Join(root, sidecarDirName, "sidecar.md")); err == nil {
+		t.Error("migration incorrectly ran against the git root instead of cwd")
+	}
+	if _, err := os.Stat(filepath.Join(sub, sidecarDirName, "sidecar.md")); err != nil {
+		t.Error("board not scaffolded in the subdir as targeted")
+	}
+}
+
+// F7: the migration message prints a path relative to the root argument,
+// not an absolute one.
+func TestMigrateLegacyBoardMessageIsRelative(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if !migrateLegacyBoard(dir, true) {
+			t.Fatal("expected migration")
+		}
+	})
+	wantRel := filepath.Join(sidecarDirName, "sidecar.md")
+	if !strings.Contains(out, wantRel) {
+		t.Errorf("message missing relative path %q:\n%s", wantRel, out)
+	}
+	if strings.Contains(out, dir) {
+		t.Errorf("message printed an absolute path:\n%s", out)
+	}
+}
+
+// F6: after a migration, runInit must not also print the "already exists"
+// line for the same os.Stat branch — that would read as a contradiction.
+func TestRunInitSuppressesAlreadyExistsAfterMigration(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "SIDECAR.md"), []byte("## 🧠 Needs action\n\n- x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out string
+	withWorkDir(t, dir, func() {
+		out = captureStdout(t, func() {
+			if code := runInit([]string{"--yes"}); code != 0 {
+				t.Fatalf("exit = %d", code)
+			}
+		})
+	})
+	if !strings.Contains(out, "Moved") {
+		t.Errorf("expected a migration message:\n%s", out)
+	}
+	if strings.Contains(out, "already exists") {
+		t.Errorf("duplicate 'already exists' message after migration:\n%s", out)
+	}
+}
+
+// U1: re-running init over an existing default board must not silently drop
+// each section's " — hint" line from the CLAUDE.md note — sectionsFromBoard
+// derives Sections from the rendered heading alone (no Hint recoverable
+// there), so it must backfill Hint from defaultSections() when the label
+// matches exactly.
+func TestRunInitRerunRoundTripsHints(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	withWorkDir(t, dir, func() {
+		if code := runInit([]string{"--yes"}); code != 0 {
+			t.Fatalf("first run exit = %d", code)
+		}
+		if code := runInit([]string{"--yes"}); code != 0 {
+			t.Fatalf("second run exit = %d", code)
+		}
+	})
+	data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range defaultSections() {
+		if s.Hint == "" {
+			continue
+		}
+		want := "— " + s.Hint
+		if !strings.Contains(string(data), want) {
+			t.Errorf("CLAUDE.md missing hint %q after re-run:\n%s", want, data)
+		}
+	}
+}
+
+// V1: outside a git work tree, repoRoot(filepath.Dir(abs)) for the default
+// board (.sidecar/sidecar.md) falls back to .sidecar/ itself (no git
+// toplevel to override it) — CLAUDE.md and .claude/settings.json must still
+// land at the project root, not inside .sidecar/, and the hook must
+// reference the default board bare ('sidecar diff', no explicit path).
+func TestRunInitYesNonGitDefaultBoardSeedsAtRoot(t *testing.T) {
+	dir := t.TempDir() // deliberately no `git init`
+	withWorkDir(t, dir, func() {
+		if code := runInit([]string{"--yes"}); code != 0 {
+			t.Fatalf("exit = %d", code)
+		}
+	})
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err != nil {
+		t.Fatal("board not created")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err != nil {
+		t.Error("CLAUDE.md not written at the top level")
+	}
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "CLAUDE.md")); err == nil {
+		t.Error("CLAUDE.md wrongly written inside .sidecar/")
+	}
+	settingsPath := filepath.Join(dir, ".claude", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("settings.json not written at .claude/settings.json: %v", err)
+	}
+	if !strings.Contains(string(data), "sidecar diff") {
+		t.Error("hook missing sidecar diff")
+	}
+	if strings.Contains(string(data), "sidecar diff sidecar.md") || strings.Contains(string(data), "sidecar diff '") {
+		t.Errorf("hook references a bad relative path instead of the bare default board:\n%s", data)
+	}
+}
+
+func TestRunInitYesNonInteractive(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	withWorkDir(t, dir, func() {
+		if code := runInit([]string{"--yes"}); code != 0 {
+			t.Fatalf("exit = %d", code)
+		}
+	})
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); err != nil {
+		t.Error("board not created")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude")); !strings.Contains(string(data), ".sidecar/") {
+		t.Error(".sidecar/ not excluded")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md")); !strings.Contains(string(data), "sidecar:review-queue") {
+		t.Error("CLAUDE.md note not written")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, ".claude", "settings.json")); !strings.Contains(string(data), "sidecar diff") {
+		t.Error("hook not written")
+	}
+}
+
+// A custom target path with --yes must not block on the git-exclude prompt —
+// the flag, not TTY state, decides. It should take the same outcome as
+// pressing Enter at the prompt: append the path to .git/info/exclude.
+func TestRunInitYesCustomPathSkipsExcludePrompt(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	target := filepath.Join(dir, "notes.md")
+	withWorkDir(t, dir, func() {
+		if code := runInit([]string{target, "--yes"}); code != 0 {
+			t.Fatalf("exit = %d", code)
+		}
+	})
+	if _, err := os.Stat(target); err != nil {
+		t.Fatal("board not created")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	if err != nil || !strings.Contains(string(data), "notes.md") {
+		t.Errorf("notes.md not in .git/info/exclude: %q, %v", data, err)
+	}
+	// F4: the .sidecar/ snapshot dir that `sidecar diff` will create beside
+	// a custom board path must be excluded too, or it shows up in git status.
+	if !strings.Contains(string(data), sidecarDirName+"/") {
+		t.Errorf(".sidecar/ not excluded alongside a custom path: %q", data)
 	}
 }
