@@ -134,7 +134,7 @@ func writeSnapshot(path string, data []byte) {
 		fmt.Fprintln(os.Stderr, "sidecar diff:", err)
 		return
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := writeFileAtomic(path, data); err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar diff:", err)
 		return
 	}
@@ -149,6 +149,36 @@ func writeSnapshot(path string, data []byte) {
 	if freshDir && filepath.Base(dir) == sidecarDirName {
 		excludeSidecarDir(repoRoot(filepath.Dir(dir)), false)
 	}
+}
+
+// writeFileAtomic writes data to path via a temp file in the same directory
+// followed by a rename, instead of os.WriteFile's truncate-in-place. A hook
+// killed mid-write (the process gets no graceful shutdown) would otherwise
+// leave a half-written snapshot, and the next diff would compare against
+// that garbage and dump bogus changes. The rename is same-directory, so it's
+// atomic on any filesystem this runs on. The temp name's different basename
+// also means the viewer's watcher (which only reacts to its exact watched
+// filename, see watcher.go) stays quiet even if a crash leaves one behind.
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // closingReminder is the last line of a non-empty diff: the reconcile
