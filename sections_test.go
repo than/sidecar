@@ -62,6 +62,9 @@ func TestRenderTemplateDefault(t *testing.T) {
 	if !strings.Contains(out, "Prune early sections") {
 		t.Errorf("template missing prune instruction:\n%s", out)
 	}
+	if !strings.Contains(out, "Never hard-wrap entry text") {
+		t.Errorf("template missing no-hard-wrap instruction:\n%s", out)
+	}
 	if !strings.HasSuffix(out, "\n") || strings.HasSuffix(out, "\n\n") {
 		t.Errorf("template must end in exactly one newline:\n%q", out[len(out)-3:])
 	}

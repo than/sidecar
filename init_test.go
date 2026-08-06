@@ -524,7 +524,7 @@ func TestReplaceClaudeNoteNoMarker(t *testing.T) {
 
 func TestClaudeNoteWritingRules(t *testing.T) {
 	note := claudeNote(filepath.Join(sidecarDirName, "sidecar.md"), defaultSections())
-	for _, want := range []string{"Apple Developer documentation voice", "two sentences of detail", "bare URLs, each on its own line", "`Next:` line"} {
+	for _, want := range []string{"Apple Developer documentation voice", "two sentences of detail", "bare URLs, each on its own line", "`Next:` line", "never hard-wrap; the viewer wraps to the pane"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note missing %q", want)
 		}

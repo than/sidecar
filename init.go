@@ -281,7 +281,8 @@ func claudeNote(rel string, sections []Section) string {
 		"- a status tag and title on the first line\n" +
 		"- two sentences of detail — more belongs in the PR or issue you link\n" +
 		"- bare URLs, each on its own line\n" +
-		"- one `Next:` line naming the single next action (optional)\n\n" +
+		"- one `Next:` line naming the single next action (optional)\n" +
+		"- entry text on one line — never hard-wrap; the viewer wraps to the pane\n\n" +
 		"If sidecar isn't installed: `go install github.com/than/sidecar@latest`,\n" +
 		"or a prebuilt binary from https://github.com/than/sidecar/releases/latest\n" +
 		"<!-- /sidecar:review-queue -->\n"
