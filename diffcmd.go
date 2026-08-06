@@ -13,6 +13,10 @@ import (
 )
 
 func runDiff(args []string) int {
+	if len(args) > 1 {
+		fmt.Fprintln(os.Stderr, "sidecar diff: too many arguments")
+		return 2
+	}
 	path := defaultBoardPath()
 	if len(args) > 0 {
 		switch args[0] {

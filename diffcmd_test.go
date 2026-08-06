@@ -296,6 +296,26 @@ func TestRunDiffUnreadableSnapshotReportsErrorWithoutReseeding(t *testing.T) {
 	}
 }
 
+// S5: `sidecar diff a.md --help` silently used a.md and ignored the rest —
+// trailing args must be rejected rather than dropped.
+func TestRunDiffTooManyArgsRejected(t *testing.T) {
+	dir := t.TempDir()
+	withWorkDir(t, dir, func() {
+		var code int
+		errOut := captureStderr(t, func() {
+			captureStdout(t, func() {
+				code = runDiff([]string{"a.md", "--help"})
+			})
+		})
+		if code != 2 {
+			t.Errorf("exit = %d, want 2", code)
+		}
+		if !strings.Contains(errOut, "sidecar diff: too many arguments") {
+			t.Errorf("stderr = %q, want it to mention too many arguments", errOut)
+		}
+	})
+}
+
 func TestRunDiffMissingBoardSilent(t *testing.T) {
 	withWorkDir(t, t.TempDir(), func() {
 		out := captureStdout(t, func() {
