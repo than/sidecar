@@ -9,11 +9,16 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func runDiff(args []string) int {
 	path := defaultBoardPath()
 	if len(args) > 0 {
+		if strings.HasPrefix(args[0], "-") {
+			fmt.Fprintf(os.Stderr, "sidecar diff: unknown flag %q\n", args[0])
+			return 2
+		}
 		path = args[0]
 	}
 	abs, err := filepath.Abs(expandTilde(path))
@@ -24,7 +29,10 @@ func runDiff(args []string) int {
 
 	raw, err := os.ReadFile(abs)
 	if err != nil {
-		return 0 // no board — silent, never an error in a hook
+		if !os.IsNotExist(err) {
+			fmt.Fprintln(os.Stderr, "sidecar diff:", err)
+		}
+		return 0
 	}
 	snap := snapshotPath(abs)
 	prev, err := os.ReadFile(snap)

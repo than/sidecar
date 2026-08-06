@@ -38,6 +38,23 @@ func captureStdout(t *testing.T, f func()) string {
 	return string(buf[:n])
 }
 
+// captureStderr runs f and returns everything it wrote to stderr.
+func captureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	f()
+	w.Close()
+	os.Stderr = old
+	buf := make([]byte, 1<<16)
+	n, _ := r.Read(buf)
+	return string(buf[:n])
+}
+
 const diffBoardV1 = "## 🧠 Needs action\n\n- Review PR #7\n\n## ✅ Done\n\n- nothing yet\n"
 const diffBoardV2 = "## 🧠 Needs action\n\n- nothing left\n\n## ✅ Done\n\n- Review PR #7\n"
 
@@ -101,6 +118,49 @@ func TestRunDiffUnparseableBoardOmitsSectionsClause(t *testing.T) {
 		}
 		if strings.Contains(last, "Sections:") {
 			t.Errorf("last line should omit Sections clause: %q", last)
+		}
+	})
+}
+
+// P1: only ENOENT is silent — any other ReadFile error (e.g. the board path
+// pointing at a directory) must exit 0 (never fail a hook) but report the
+// error on stderr rather than silently swallowing it.
+func TestRunDiffBoardPathIsDirectoryReportsError(t *testing.T) {
+	dir := t.TempDir()
+	boardDir := filepath.Join(dir, sidecarDirName)
+	os.MkdirAll(filepath.Join(boardDir, "sidecar.md"), 0o755) // a dir named sidecar.md
+	withWorkDir(t, dir, func() {
+		var code int
+		errOut := captureStderr(t, func() {
+			captureStdout(t, func() {
+				code = runDiff(nil)
+			})
+		})
+		if code != 0 {
+			t.Errorf("exit = %d, want 0", code)
+		}
+		if errOut == "" {
+			t.Error("expected a stderr message for a non-ENOENT ReadFile error, got none")
+		}
+	})
+}
+
+// P4: `sidecar diff --oops` must not be silently treated as a board path —
+// reject any first arg starting with "-" as an unknown flag.
+func TestRunDiffUnknownFlagRejected(t *testing.T) {
+	dir := t.TempDir()
+	withWorkDir(t, dir, func() {
+		var code int
+		errOut := captureStderr(t, func() {
+			captureStdout(t, func() {
+				code = runDiff([]string{"--oops"})
+			})
+		})
+		if code != 2 {
+			t.Errorf("exit = %d, want 2", code)
+		}
+		if !strings.Contains(errOut, `unknown flag "--oops"`) {
+			t.Errorf("stderr = %q, want it to mention the unknown flag", errOut)
 		}
 	})
 }
