@@ -170,6 +170,25 @@ func renderMarkdown(rawIn string, width int) (string, error) {
 	return out, nil
 }
 
+// renderMarkdownPlain renders raw markdown WITHOUT bare-URL truncation or
+// OSC 8 hyperlinking — for output that isn't headed to an interactive
+// terminal (see runStatic in main.go). Piped output — into grep, a file, a
+// log — has no terminal to interpret an OSC 8 escape; burying the only
+// intact copy of a long URL inside one would make it unrecoverable by the
+// tools that read piped text, and, for terminals that don't understand OSC 8
+// at all, would just print the raw escape bytes. Every URL survives exactly
+// as written in the source.
+func renderMarkdownPlain(raw string, width int) (string, error) {
+	if width < 10 {
+		width = 10
+	}
+	out, err := glamourRender(raw, width)
+	if err != nil {
+		return "", err
+	}
+	return tidy(out), nil
+}
+
 // glamourRender runs raw markdown through glamour at the given width, with
 // this file's style and truecolor forced on.
 func glamourRender(raw string, width int) (string, error) {

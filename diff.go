@@ -18,16 +18,24 @@ func stripANSI(s string) string {
 
 // changedLines returns the indices into newLines that are new or modified
 // relative to oldLines — the lines not covered by the longest common
-// subsequence of the two, compared on ANSI-stripped visible text. An inserted
-// line marks only itself, not the identical lines shifted below it.
+// subsequence of the two, compared on SGR-stripped text. An inserted line
+// marks only itself, not the identical lines shifted below it.
+//
+// This intentionally strips only SGR color/style codes (ansiRE), not OSC 8
+// hyperlink wrappers (unlike stripANSI, used elsewhere for visible text and
+// width). A comparison key built from fully visible-only text would make two
+// bare-URL lines that collide on their truncated display text (see
+// linkify.go) compare equal even when their OSC 8 targets — the only place
+// the actual URL survives — differ, going blind to exactly the edits this
+// hyperlinking feature creates.
 func changedLines(oldLines, newLines []string) map[int]bool {
 	o := make([]string, len(oldLines))
 	for i, l := range oldLines {
-		o[i] = stripANSI(l)
+		o[i] = ansiRE.ReplaceAllString(l, "")
 	}
 	n := make([]string, len(newLines))
 	for i, l := range newLines {
-		n[i] = stripANSI(l)
+		n[i] = ansiRE.ReplaceAllString(l, "")
 	}
 
 	changed := map[int]bool{}

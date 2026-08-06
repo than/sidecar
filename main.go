@@ -107,11 +107,18 @@ func runStatic(args []string) int {
 		fmt.Fprintln(os.Stderr, "sidecar:", err)
 		return 1
 	}
+	// term.GetSize succeeding is also this process's signal that stdout is a
+	// terminal, not a pipe/file — reuse it rather than a second IsTerminal
+	// check. Piped output skips URL truncation/hyperlinking entirely (see
+	// renderMarkdownPlain): there's no terminal on the other end to resolve
+	// an OSC 8 escape, so the full URL must survive as plain, grep-able text.
 	width := 80
+	render := renderMarkdownPlain
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
 		width = w
+		render = renderMarkdown
 	}
-	out, err := renderMarkdown(string(data), width-2)
+	out, err := render(string(data), width-2)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar:", err)
 		return 1

@@ -100,6 +100,77 @@ func TestTruncateBareURLsReservesNestedIndent(t *testing.T) {
 	}
 }
 
+// A run of ~~~ inside a ``` block (or vice versa) is fence CONTENT, not a
+// fence delimiter — it must not flip fence state early and let the "closed"
+// remainder of the block through to truncation/linkification.
+func TestTruncateBareURLsFenceCharMustMatch(t *testing.T) {
+	url := "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
+	raw := "```\n~~~\n- " + url + "\n```\n"
+	_, truncations := truncateBareURLs(raw, 24, nil)
+	if len(truncations) != 0 {
+		t.Errorf("URL inside ``` block (after an unrelated ~~~ line) was truncated: %+v", truncations)
+	}
+}
+
+func TestOsc8SafeRejectsControlBytes(t *testing.T) {
+	if osc8Safe("https://example.test/\x07inject") {
+		t.Error("URL containing BEL should be unsafe")
+	}
+	if osc8Safe("https://example.test/\x1b]2;pwned\x07") {
+		t.Error("URL containing ESC should be unsafe")
+	}
+	if !osc8Safe("https://example.test/fine") {
+		t.Error("plain ASCII URL should be safe")
+	}
+}
+
+// A control byte in the URL (BEL here) must never reach an OSC 8 escape —
+// embedding it verbatim would let it terminate the escape early and inject
+// arbitrary terminal control sequences from markdown content. The line's
+// visible, width-correct truncated text is still fine to keep (see osc8Safe's
+// doc comment) — it's the hyperlink specifically that must not exist.
+func TestLinkifyTruncationsSkipsUnsafeURL(t *testing.T) {
+	rendered := "\x1b[38;2;1;2;3mtext\x1b[0m"
+	truncations := []urlTruncation{
+		{display: "text", full: "https://example.test/\x07inject"},
+	}
+	out, unresolved := linkifyTruncations(rendered, truncations)
+	if len(unresolved) != 0 {
+		t.Errorf("unsafe URL should not be reported unresolved: %+v", unresolved)
+	}
+	if strings.Contains(out, "\x1b]8;;") {
+		t.Errorf("unsafe URL was hyperlinked:\n%q", out)
+	}
+	if out != rendered {
+		t.Errorf("output changed for a skipped hyperlink:\ngot  %q\nwant %q", out, rendered)
+	}
+}
+
+// A URL containing East-Asian-wide runes must be measured, and cut, by
+// terminal cell width — not rune count. A rune-count budget would think a
+// wide-rune URL fits when it actually renders twice as wide per rune,
+// letting it through untruncated straight into glamour's own word-wrap.
+func TestTruncateBareURLsCutsWideRunesByCellWidth(t *testing.T) {
+	// Each “例” is 1 rune but 2 terminal cells; 40 of them is 40 runes but
+	// 80 cells — comfortably over any width used in these tests.
+	url := "https://example.test/" + strings.Repeat("例", 40)
+	const width = 30
+
+	_, truncations := truncateBareURLs("- "+url+"\n", width, nil)
+	if len(truncations) != 1 {
+		t.Fatalf("expected 1 truncation, got %d: %+v", len(truncations), truncations)
+	}
+	display := truncations[0].display
+	if w := visibleWidth(display); w > width-2 {
+		t.Errorf("display text %d cells wide, exceeds budget (width %d): %q", w, width, display)
+	}
+	// A rune-count budget would have kept far more than this many runes
+	// (each wrongly assumed to cost 1 cell instead of 2).
+	if n := len([]rune(display)); n > width-2 {
+		t.Errorf("display text kept %d runes at width %d — looks rune-counted, not cell-counted: %q", n, width, display)
+	}
+}
+
 func TestLinkifyTruncationsCollidingDisplayText(t *testing.T) {
 	styled := func(text string) string {
 		return "\x1b[38;2;1;2;3m" + text + "\x1b[0m"

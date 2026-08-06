@@ -6,12 +6,26 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // bareURLLineRE matches a raw markdown line that is, per the board's own
 // convention, nothing but a bare URL — optionally under a "- "/"* "/"+ "
 // bullet. Only these lines are candidates for the wrap fix: URLs embedded in
 // running prose are left to glamour as before.
+//
+// Deliberately unhandled shapes (out of scope for this fix, not oversights):
+// an ordered-list URL ("1. https://…" — Enumeration uses a different
+// glamour prefix/width than Item, and ordered bare-URL items don't appear in
+// this board's own convention or fixture); a block-quoted URL ("> https://…"
+// — BlockQuote's "│ " indent isn't accounted for by the reserve calc below);
+// and a task-list URL ("- [ ] https://…" — the "[ ] "/"[x] " checkbox eats
+// more width than a plain bullet, and isn't reflected in the reserve
+// either). Each would need its own reserve term; none currently appear on
+// real boards using this viewer. A URL in any of these shapes still renders
+// — just with the pre-#15-fix wrapping behavior if it's too long, not the
+// truncate+hyperlink treatment.
 var bareURLLineRE = regexp.MustCompile(`^(\s*[-*+]\s+)?(https?://\S+)\s*$`)
 
 // osc8Open opens an OSC 8 hyperlink; osc8Close ends it. BEL-terminated (not
@@ -31,8 +45,35 @@ type urlTruncation struct {
 }
 
 // fenceRE matches a fenced-code-block delimiter line (``` or ~~~, any
-// fence-length/info-string suffix), for tracking fence state line by line.
-var fenceRE = regexp.MustCompile("^(\\s*)(```+|~~~+)")
+// fence-length/info-string suffix) and captures which character it's built
+// from, so a run of ``` can't be closed early by an unrelated ~~~ line (or
+// vice versa) — same rule CommonMark itself uses.
+var fenceRE = regexp.MustCompile("^\\s*(`{3,}|~{3,})")
+
+// osc8Safe reports whether url is safe to embed as the target of an OSC 8
+// escape: every byte in the printable ASCII range 0x20–0x7E, matching what
+// the OSC 8 spec itself requires of a URI. bareURLLineRE's "\S+" happily
+// matches raw control bytes (BEL, ESC, ...) if the source markdown contains
+// them — embedding one verbatim in "\x1b]8;;<url>\x07" would let it
+// terminate the escape early (or start a new one) and inject arbitrary
+// terminal control sequences into the render.
+//
+// This gates only the hyperlink attachment in linkifyTruncations, not the
+// display-text truncation in truncateBareURLs: the truncated text is plain
+// markdown, rendered exactly the way glamour already renders any bare URL's
+// raw bytes today — no new escape sequence is built from it, so no new
+// injection surface. Excluding it from truncation entirely would also have
+// silently reintroduced the wrap bug (issue #15) for any URL containing a
+// wide/non-ASCII rune (see the cell-width fix below), which is legitimate
+// content, not an attack.
+func osc8Safe(url string) bool {
+	for i := 0; i < len(url); i++ {
+		if url[i] < 0x20 || url[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
 
 // truncateBareURLs rewrites raw markdown so that any bare-URL-only line
 // wider than width is shortened to fit, with a trailing ellipsis. Lines that
@@ -47,13 +88,21 @@ var fenceRE = regexp.MustCompile("^(\\s*)(```+|~~~+)")
 func truncateBareURLs(raw string, width int, skip map[string]bool) (string, []urlTruncation) {
 	lines := strings.Split(raw, "\n")
 	var truncations []urlTruncation
-	inFence := false
+	fenceChar := byte(0) // 0 when not inside a fence; '`' or '~' while inside one
 	for i, line := range lines {
-		if fenceRE.MatchString(line) {
-			inFence = !inFence
+		if m := fenceRE.FindStringSubmatch(line); m != nil {
+			c := m[1][0]
+			if fenceChar == 0 {
+				fenceChar = c
+			} else if c == fenceChar {
+				fenceChar = 0
+			}
+			// A fence line of the OTHER character, while already inside a
+			// fence, is just content (e.g. a ~~~ example inside a ``` block)
+			// — state doesn't change.
 			continue
 		}
-		if inFence {
+		if fenceChar != 0 {
 			continue
 		}
 		m := bareURLLineRE.FindStringSubmatch(line)
@@ -80,18 +129,40 @@ func truncateBareURLs(raw string, width int, skip map[string]bool) (string, []ur
 		if budget < 8 {
 			budget = 8
 		}
-		if len([]rune(url)) <= budget {
+		// Budget and cut are measured in terminal cells (visibleWidth /
+		// go-runewidth), not runes: a rune-count budget measures a
+		// wide-rune URL (CJK domains, box-drawing, ...) as shorter than it
+		// actually renders, lets it through uncut, and glamour force-wraps
+		// it anyway — falling back to exactly the broken behavior this fix
+		// exists to prevent, just for non-ASCII URLs instead of long ones.
+		if visibleWidth(url) <= budget {
 			continue // fits as-is; let glamour's existing autolink path handle it
 		}
-		keep := budget - 1 // room for the ellipsis
-		if keep < 1 {
-			keep = 1
-		}
-		display := string([]rune(url)[:keep]) + "…"
+		display := cutToCellWidth(url, budget-1) + "…" // -1: room for the ellipsis
 		lines[i] = prefix + display
 		truncations = append(truncations, urlTruncation{display: display, full: url})
 	}
 	return strings.Join(lines, "\n"), truncations
+}
+
+// cutToCellWidth returns the longest prefix of s whose total terminal cell
+// width (go-runewidth — East-Asian-wide runes count as 2) does not exceed
+// maxCells.
+func cutToCellWidth(s string, maxCells int) string {
+	if maxCells < 1 {
+		maxCells = 1
+	}
+	var b strings.Builder
+	w := 0
+	for _, r := range s {
+		rw := runewidth.RuneWidth(r)
+		if w+rw > maxCells {
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	return b.String()
 }
 
 // linkifyTruncations wraps each truncation's display text, wherever it
@@ -112,10 +183,18 @@ func truncateBareURLs(raw string, width int, skip map[string]bool) (string, []ur
 // the reserve estimate in truncateBareURLs under-budgeted and glamour wrapped
 // it after all) is returned unresolved rather than silently dropped, so the
 // caller can fall back to rendering that URL untruncated.
+//
+// A truncation whose full URL fails osc8Safe is skipped outright — not
+// reported as unresolved, since nothing needs a fallback retry: the visible,
+// width-correct truncated text is already in place and stays exactly as
+// rendered, just without a hyperlink wrapped around it.
 func linkifyTruncations(rendered string, truncations []urlTruncation) (string, []urlTruncation) {
 	var unresolved []urlTruncation
 	cursor := 0
 	for _, t := range truncations {
+		if !osc8Safe(t.full) {
+			continue
+		}
 		start, end, ok := findPlainRange(rendered[cursor:], t.display)
 		if !ok {
 			unresolved = append(unresolved, t)

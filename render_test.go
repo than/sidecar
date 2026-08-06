@@ -234,6 +234,108 @@ func TestNestedBareURLNeverWraps(t *testing.T) {
 	}
 }
 
+// End-to-end regression for AB1: two renders of a board where a bare URL's
+// last path segment changes (pull/17 → pull/18), but the change lands
+// entirely past the truncation budget so the two renders' VISIBLE text is
+// byte-for-byte identical — only the OSC 8 target differs. changedLines must
+// still flag the line so the ▸ marker and flash fire; a human reading past
+// the truncation would otherwise never learn the link moved.
+func TestChangedLinesDetectsCollidingURLTargetChange(t *testing.T) {
+	common := "https://example.test/" + strings.Repeat("a", 80) + "/pull/"
+	const width = 40
+
+	before, err := renderMarkdown("- "+common+"17\n", width)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := renderMarkdown("- "+common+"18\n", width)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldLines := strings.Split(before, "\n")
+	newLines := strings.Split(after, "\n")
+	if stripANSI(before) != stripANSI(after) {
+		t.Fatalf("test setup invalid: visible text differs, not a true collision:\nbefore: %q\nafter:  %q",
+			stripANSI(before), stripANSI(after))
+	}
+
+	changed := changedLines(oldLines, newLines)
+	if len(changed) == 0 {
+		t.Errorf("target-only change went undetected: %v", changed)
+	}
+}
+
+// renderMarkdownPlain (the non-terminal path used by --static when stdout
+// isn't a TTY, e.g. piped into grep) must never truncate a bare URL or wrap
+// it in an OSC 8 escape: there's no terminal on the other end to resolve the
+// escape, and burying the only intact copy of the URL inside one makes it
+// unrecoverable by whatever's reading the pipe.
+func TestRenderMarkdownPlainNoHyperlink(t *testing.T) {
+	const url = "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
+	raw := "- " + url + "\n"
+
+	out, err := renderMarkdownPlain(raw, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := stripANSI(out)
+	// This path doesn't fix issue #15's wrapping (that requires truncation,
+	// which piped output can't have) — glamour may still force-break the
+	// line across several rows. It must not, however, shorten the URL text
+	// itself: joining the wrapped fragments back together must reproduce it
+	// exactly, with no ellipsis substituted anywhere in between.
+	joined := strings.ReplaceAll(strings.ReplaceAll(plain, "\n", ""), " ", "")
+	if !strings.Contains(joined, strings.ReplaceAll(url, " ", "")) {
+		t.Errorf("URL was altered, full text not reconstructible from wrapped lines:\n%s", plain)
+	}
+	if strings.Contains(plain, "…") {
+		t.Errorf("URL was truncated:\n%s", plain)
+	}
+	if strings.Contains(out, "\x1b]8;;") {
+		t.Errorf("URL was hyperlinked:\n%q", out)
+	}
+}
+
+// End-to-end regression for AB3: a bare URL containing a raw control byte
+// (BEL) must never end up as an OSC 8 hyperlink target — embedding it would
+// let it terminate our own escape early and let the rest of the URL's bytes
+// be interpreted as a new, attacker-controlled terminal escape sequence.
+func TestControlByteURLNeverHyperlinked(t *testing.T) {
+	url := "https://github.com/example/really-long-org-name/really-long-repo-name/pull/\x07123456"
+	raw := "- " + url + "\n"
+
+	out, err := renderMarkdown(raw, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "\x1b]8;;") {
+		t.Errorf("control-byte URL was hyperlinked:\n%q", out)
+	}
+}
+
+// End-to-end regression for AB4: a URL made of East-Asian-wide runes must
+// never render wider than the pane. Measuring the fit/cut by rune count
+// would consistently undercount a wide-rune URL's actual terminal width,
+// letting it through untruncated and straight into glamour's own
+// word-wrap — the exact wrapped-URL bug this PR exists to fix, just
+// triggered by rune width instead of rune count.
+func TestWideRuneURLNeverWraps(t *testing.T) {
+	url := "https://example.test/" + strings.Repeat("例", 40)
+	raw := "- " + url + "\n"
+	const width = 30
+
+	out, err := renderMarkdown(raw, width)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, line := range strings.Split(out, "\n") {
+		if w := visibleWidth(line); w > width {
+			t.Errorf("line %d: visible width %d exceeds width %d: %q", i, w, width, stripANSI(line))
+		}
+	}
+}
+
 // stripANSI and visibleWidth must treat OSC 8 hyperlink escapes as invisible
 // — otherwise the URL embedded in the escape target gets counted as visible
 // text and corrupts width checks and diff comparisons.

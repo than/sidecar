@@ -60,6 +60,24 @@ func TestChangedLinesIgnoresANSI(t *testing.T) {
 	}
 }
 
+// Two lines with identical visible text but different OSC 8 hyperlink
+// targets must compare as CHANGED — this is exactly what happens when two
+// long bare URLs collide on their truncated display text (linkify.go) and
+// only their (invisible) targets differ. changedLines must not use the same
+// visible-only comparison key that stripANSI produces for rendering/width,
+// or the edit goes undetected: no ▸ marker, no flash.
+func TestChangedLinesOSC8TargetChangeDetected(t *testing.T) {
+	line := func(target string) string {
+		return "\x1b[38;2;78;201;229;4m\x1b]8;;" + target + "\x07" +
+			"https://example.test/collide…\x1b[0m\x1b]8;;\a"
+	}
+	old := []string{line("https://example.test/pull/17")}
+	nw := []string{line("https://example.test/pull/18")}
+	if got := idx(changedLines(old, nw)); !eq(got, []int{0}) {
+		t.Errorf("OSC 8 target change → %v, want [0]", got)
+	}
+}
+
 func TestComposeMarkedBulletSwap(t *testing.T) {
 	// A changed bullet line: the literal "• " becomes a styled "▸ ".
 	lines := []string{"\x1b[38;2;208;208;208m• \x1b[0malpha"}
