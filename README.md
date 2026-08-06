@@ -21,15 +21,15 @@ Run Sidecar beside your Claude Code session in a split terminal. Claude edits `.
 | --- | --- |
 | edits `.sidecar/sidecar.md`,<br>transcript scrolls | 🧠 Needs action<br>🚧 In progress<br>🚘 Parked<br>✅ Done<br>📦 Shipped |
 
-Any split-pane setup works — [Supacode], tmux, or your terminal’s built-in splits (Ghostty, iTerm2, WezTerm). To keep the queue current, use the `UserPromptSubmit` hook that `sidecar init` offers (option `[b]`). It reminds Claude to update the file each turn, so the view stays fresh. For details, see [Connect it to Claude Code](#connect-it-to-claude-code).
+Any split-pane setup works — [Supacode], tmux, or your terminal’s built-in splits (Ghostty, iTerm2, WezTerm). To keep the queue current, use the `UserPromptSubmit` hook that `sidecar init` installs by default. It reminds Claude to update the file each turn, so the view stays fresh. For details, see [Connect it to Claude Code](#connect-it-to-claude-code).
 
 [Supacode]: https://supacode.sh
 
 ## Connect it to Claude Code
 
-`sidecar init` creates a starter `.sidecar/sidecar.md`. Inside a git repository, its home is excluded automatically — appended to `.git/info/exclude`, uncommitted, applying in every worktree — because a personal scratchpad usually shouldn’t be tracked. No prompt: the default location is decided, so there’s nothing to ask. Pass a custom path (`sidecar init notes.md`) instead, and `init` prompts for where to keep it out of git — `.git/info/exclude` or the committed `.gitignore`. Run `sidecar init --yes` to accept the defaults without prompting — handy for scripts and first-time setup. If a root-level `SIDECAR.md` from an older Sidecar exists, `init` offers to move it into `.sidecar/sidecar.md` for you.
+`sidecar init` creates a starter `.sidecar/sidecar.md` and wires it into Claude Code — no questions asked. Every recommended default applies: its home is excluded from git automatically (appended to `.git/info/exclude`, uncommitted, applying in every worktree, because a personal scratchpad usually shouldn’t be tracked), a note goes into `CLAUDE.md`, and a per-turn `UserPromptSubmit` reconcile hook merges into `.claude/settings.json` so Claude Code keeps the queue current and knows how to install and launch Sidecar. Running `sidecar init` again upgrades an earlier setup in place. If a root-level `SIDECAR.md` from an older Sidecar exists, it’s migrated into `.sidecar/sidecar.md` for you, silently.
 
-It then offers to add a note to `CLAUDE.md`, and optionally a per-turn `UserPromptSubmit` reconcile hook, so your Claude Code sessions keep the queue up to date and know how to install and launch Sidecar. The hook merges into an existing `.claude/settings.json`, so running `sidecar init` again upgrades an earlier setup in place.
+Two flags opt out of a default: `--no-claude` skips the `CLAUDE.md` note and reconcile hook; `--keep-board` leaves a legacy root `SIDECAR.md` where it is. `--yes`/`-y` are accepted as no-op aliases — this is already the default behavior they used to request. Creating a brand-new board from an interactive terminal still opens a short picker for choosing its sections; pass a custom path (`sidecar init notes.md`) to place the board somewhere other than `.sidecar/sidecar.md`, which still gets the same automatic exclude, note, and hook.
 
 ## What it does
 

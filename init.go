@@ -12,18 +12,34 @@ import (
 	"golang.org/x/term"
 )
 
-// runInit scaffolds the target file and offers to keep it out of git.
-// Returns a process exit code.
+// runInit scaffolds the target file and wires it into Claude Code. Every
+// recommended default applies without asking: a legacy root SIDECAR.md is
+// migrated, the board's home is git-excluded, and a CLAUDE.md note plus
+// reconcile hook are written. --no-claude and --keep-board opt out of the
+// Claude Code wiring and the migration, respectively. --yes/-y are accepted
+// as no-op aliases for scripts and muscle memory written before this
+// behavior became the default. Returns a process exit code.
 func runInit(args []string) int {
-	assumeYes := false
+	noClaude := false
+	keepBoard := false
 	var rest []string
 	for _, a := range args {
 		switch a {
 		case "--yes", "-y":
-			assumeYes = true
+			// No-op: bare init already installs every default.
+		case "--no-claude":
+			noClaude = true
+		case "--keep-board":
+			keepBoard = true
 		case "-h", "--help":
 			fmt.Println("usage: sidecar init [file.md]")
-			fmt.Println("Creates the board and wires it into Claude Code.")
+			fmt.Println("Creates the board and wires it into Claude Code — no prompts, every")
+			fmt.Println("recommended default applies (migrate a legacy board, git-exclude,")
+			fmt.Println("CLAUDE.md note + reconcile hook).")
+			fmt.Println()
+			fmt.Println("  --no-claude    skip the CLAUDE.md note and reconcile hook")
+			fmt.Println("  --keep-board   skip migrating a legacy root SIDECAR.md")
+			fmt.Println("  --yes, -y      accepted as a no-op — this is already the default")
 			return 0
 		default:
 			if strings.HasPrefix(a, "-") {
@@ -47,14 +63,14 @@ func runInit(args []string) int {
 	}
 
 	migrated := false
-	if isDefaultTarget {
+	if isDefaultTarget && !keepBoard {
 		// Migrate against the directory the target itself resolves in — the
 		// target's parent's parent (.sidecar/sidecar.md → cwd) — not the git
 		// root. They coincide in the normal case; from a subdirectory of a
 		// repo, a root-level SIDECAR.md is left alone rather than migrated
 		// out from under the directory the user actually asked to init.
 		root := filepath.Dir(filepath.Dir(abs))
-		migrated = migrateLegacyBoard(root, assumeYes)
+		migrated = migrateLegacyBoard(root, true) // silent — no prompt on bare init
 	}
 
 	sections := defaultSections()
@@ -76,7 +92,10 @@ func runInit(args []string) int {
 			fmt.Fprintln(os.Stderr, "sidecar init: could not read", target, "—", rerr)
 		}
 	} else {
-		if !assumeYes && interactiveTTY() {
+		// The picker is the one prompt that survives: it only runs when
+		// creating a brand-new board and both stdin and stdout are a
+		// terminal, and Ctrl-C there still cancels the whole init.
+		if interactiveTTY() {
 			picked, interrupted := pickSections(defaultSections())
 			if interrupted {
 				fmt.Fprintln(os.Stderr, "sidecar init: canceled — nothing written.")
@@ -93,12 +112,10 @@ func runInit(args []string) int {
 
 	if filepath.Base(filepath.Dir(abs)) == sidecarDirName {
 		excludeSidecarDir(repoRootForBoard(abs), true)
-	} else if assumeYes {
-		gitExcludeDefault(abs)
 	} else {
-		offerGitExclude(abs)
+		gitExcludeDefault(abs)
 	}
-	if assumeYes {
+	if !noClaude {
 		root := repoRootForBoard(abs)
 		rel, err := filepath.Rel(root, abs)
 		if err != nil {
@@ -106,8 +123,6 @@ func runInit(args []string) int {
 		}
 		writeClaudeNote(root, rel, sections)
 		writeReconcileHook(root, rel, sections)
-	} else {
-		offerClaudeHook(abs, sections)
 	}
 
 	if isDefaultTarget {
@@ -336,8 +351,16 @@ const hookSentinel = "the sidecar review queue"
 // yields no labels — the "Sections: …" clause is dropped entirely rather
 // than rendering the empty-list degenerate "Sections: .", while the sentinel
 // phrase stays intact either way.
+//
+// The watch-it invocation is bare `sidecar` for the default board path
+// (.sidecar/sidecar.md) and `sidecar <rel>` for a custom one — matching how
+// init's own closing "Watch it:" hint addresses each case.
 func reconcileMessageLabels(rel string, labels []string) string {
-	msg := fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `sidecar %s`.", rel, hookSentinel, rel)
+	invocation := "sidecar " + rel
+	if rel == filepath.Join(sidecarDirName, "sidecar.md") {
+		invocation = "sidecar"
+	}
+	msg := fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `%s`.", rel, hookSentinel, invocation)
 	if len(labels) == 0 {
 		return msg
 	}
