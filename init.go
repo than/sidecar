@@ -20,13 +20,14 @@ import (
 // as no-op aliases for scripts and muscle memory written before this
 // behavior became the default. Returns a process exit code.
 func runInit(args []string) int {
+	assumeYes := false
 	noClaude := false
 	keepBoard := false
 	var rest []string
 	for _, a := range args {
 		switch a {
 		case "--yes", "-y":
-			// No-op: bare init already installs every default.
+			assumeYes = true
 		case "--no-claude":
 			noClaude = true
 		case "--keep-board":
@@ -39,7 +40,7 @@ func runInit(args []string) int {
 			fmt.Println()
 			fmt.Println("  --no-claude    skip the CLAUDE.md note and reconcile hook")
 			fmt.Println("  --keep-board   skip migrating a legacy root SIDECAR.md")
-			fmt.Println("  --yes, -y      accepted as a no-op — this is already the default")
+			fmt.Println("  --yes, -y      skip the section picker on a brand-new board")
 			return 0
 		default:
 			if strings.HasPrefix(a, "-") {
@@ -63,14 +64,28 @@ func runInit(args []string) int {
 	}
 
 	migrated := false
-	if isDefaultTarget && !keepBoard {
+	if isDefaultTarget {
 		// Migrate against the directory the target itself resolves in — the
 		// target's parent's parent (.sidecar/sidecar.md → cwd) — not the git
 		// root. They coincide in the normal case; from a subdirectory of a
 		// repo, a root-level SIDECAR.md is left alone rather than migrated
 		// out from under the directory the user actually asked to init.
 		root := filepath.Dir(filepath.Dir(abs))
-		migrated = migrateLegacyBoard(root, true) // silent — no prompt on bare init
+		if keepBoard {
+			// Keep the legacy root board right where it is — target it
+			// directly instead of scaffolding a fresh .sidecar/sidecar.md
+			// that would silently shadow it (defaultBoardPath prefers the
+			// new location over the legacy one). The custom-path code below
+			// already handles a non-default board correctly.
+			legacy := filepath.Join(root, legacyFile)
+			if _, err := os.Stat(legacy); err == nil {
+				target = legacyFile
+				abs = legacy
+				isDefaultTarget = false
+			}
+		} else {
+			migrated = migrateLegacyBoard(root) // silent — no prompt on bare init
+		}
 	}
 
 	sections := defaultSections()
@@ -93,9 +108,10 @@ func runInit(args []string) int {
 		}
 	} else {
 		// The picker is the one prompt that survives: it only runs when
-		// creating a brand-new board and both stdin and stdout are a
-		// terminal, and Ctrl-C there still cancels the whole init.
-		if interactiveTTY() {
+		// creating a brand-new board, both stdin and stdout are a terminal,
+		// and --yes/-y wasn't passed to skip it — Ctrl-C there still
+		// cancels the whole init.
+		if !assumeYes && interactiveTTY() {
 			picked, interrupted := pickSections(defaultSections())
 			if interrupted {
 				fmt.Fprintln(os.Stderr, "sidecar init: canceled — nothing written.")
@@ -174,9 +190,10 @@ func sectionFromLabel(label string) Section {
 }
 
 // migrateLegacyBoard moves a root-level SIDECAR.md into .sidecar/sidecar.md
-// and untracks it when git knows it. assumeYes skips the prompt. Returns
-// true when a move happened.
-func migrateLegacyBoard(root string, assumeYes bool) bool {
+// and untracks it when git knows it. Always silent — callers that want the
+// legacy board left in place (e.g. `sidecar init --keep-board`) simply don't
+// call this. Returns true when a move happened.
+func migrateLegacyBoard(root string) bool {
 	legacy := filepath.Join(root, legacyFile)
 	target := filepath.Join(root, sidecarDirName, "sidecar.md")
 	if _, err := os.Stat(legacy); err != nil {
@@ -188,19 +205,6 @@ func migrateLegacyBoard(root string, assumeYes bool) bool {
 	targetRel := filepath.Join(sidecarDirName, "sidecar.md")
 	if rel, err := filepath.Rel(root, target); err == nil {
 		targetRel = rel
-	}
-	if !assumeYes {
-		if !stdinIsTerminal() {
-			// No one can answer — EOF on a piped/hookish stdin makes
-			// readChoice() return "", which defaults to yes and would
-			// silently rename a file no one agreed to move.
-			return false
-		}
-		fmt.Printf("Move %s into %s/? [Y/n]: ", legacyFile, sidecarDirName)
-		if c := readChoice(); c == "n" || c == "no" {
-			fmt.Printf("Left %s in place — %s will take precedence once you create it.\n", legacyFile, targetRel)
-			return false
-		}
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
@@ -346,6 +350,14 @@ func writeClaudeNote(root, rel string, sections []Section) {
 // older SessionStart one — instead of stacking duplicates.
 const hookSentinel = "the sidecar review queue"
 
+// isDefaultBoardRel reports whether rel is the default board's path relative
+// to its repo root (.sidecar/sidecar.md) — the shared test behind both the
+// reconcile reminder's bare `sidecar` invocation and the diff hook's bare
+// `sidecar diff` invocation, so the two stay in sync.
+func isDefaultBoardRel(rel string) bool {
+	return rel == filepath.Join(sidecarDirName, "sidecar.md")
+}
+
 // reconcileMessageLabels renders the per-turn reminder from plain heading
 // labels. reconcileMessage adapts []Section to it. An unparseable board
 // yields no labels — the "Sections: …" clause is dropped entirely rather
@@ -357,7 +369,7 @@ const hookSentinel = "the sidecar review queue"
 // init's own closing "Watch it:" hint addresses each case.
 func reconcileMessageLabels(rel string, labels []string) string {
 	invocation := "sidecar " + rel
-	if rel == filepath.Join(sidecarDirName, "sidecar.md") {
+	if isDefaultBoardRel(rel) {
 		invocation = "sidecar"
 	}
 	msg := fmt.Sprintf("If your last turn changed task state, reconcile %s — %s the human watches with `%s`.", rel, hookSentinel, invocation)
@@ -383,7 +395,7 @@ func reconcileMessage(rel string, sections []Section) string {
 // sentinel phrase, so re-running init still finds and upgrades this hook.
 func reconcileHookEntry(rel string, sections []Section) map[string]any {
 	diffCmd := "sidecar diff"
-	if rel != filepath.Join(sidecarDirName, "sidecar.md") {
+	if !isDefaultBoardRel(rel) {
 		diffCmd += " " + shSingleQuote(rel)
 	}
 	// `command -v sidecar` only proves a binary named sidecar exists, not
@@ -658,8 +670,8 @@ Choice [E/g/n]: `, rel)
 
 // gitExcludeDefault takes offerGitExclude's recommended default — appending
 // the file to .git/info/exclude — without printing a prompt or reading
-// stdin. Used by `sidecar init --yes`, which decides by flag rather than
-// TTY state. No-op outside a work tree or when the file is already ignored.
+// stdin. Used by `sidecar init`, which never prompts for this. No-op outside
+// a work tree or when the file is already ignored.
 func gitExcludeDefault(fileAbs string) {
 	dir := filepath.Dir(fileAbs)
 	if filepath.Base(dir) == sidecarDirName {
@@ -687,8 +699,8 @@ func gitExcludeDefault(fileAbs string) {
 }
 
 // applyExcludeDefault appends rel to dir's .git/info/exclude — the shared
-// action behind both the interactive "recommended" choice and the
-// non-interactive --yes default.
+// action behind both offerGitExclude's interactive "recommended" choice and
+// gitExcludeDefault's non-interactive default.
 func applyExcludeDefault(dir, rel string) {
 	path, ok := git(dir, "rev-parse", "--git-path", "info/exclude")
 	if !ok {
