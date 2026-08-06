@@ -552,9 +552,7 @@ func excludeSidecarDir(dir string) {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(dir, path)
 	}
-	if err := appendLine(path, sidecarDirName+"/"); err != nil {
-		fmt.Fprintln(os.Stderr, "sidecar init:", err)
-	}
+	writeIgnore(path, sidecarDirName+"/")
 }
 
 // offerGitExclude prompts to keep the file out of git, when inside a work

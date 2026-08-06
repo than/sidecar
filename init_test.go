@@ -324,6 +324,17 @@ func TestExcludeSidecarDir(t *testing.T) {
 	}
 }
 
+// Q3: excludeSidecarDir must print the same confirmation line every other
+// exclude path prints, instead of succeeding silently.
+func TestExcludeSidecarDirPrintsConfirmation(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	out := captureStdout(t, func() { excludeSidecarDir(dir) })
+	if !strings.Contains(out, `Added ".sidecar/"`) {
+		t.Errorf("out = %q, want a confirmation line like the other exclude paths", out)
+	}
+}
+
 // withStdin redirects os.Stdin to input for the duration of f, restoring it
 // afterward.
 func withStdin(t *testing.T, input string, f func()) {
