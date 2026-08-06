@@ -227,7 +227,7 @@ func unifiedU0(oldRaw, newRaw string) []string {
 	// Group consecutive ops into hunks and render headers.
 	var out []string
 	for k := 0; k < len(ops); {
-		start := k
+		h0 := k
 		for k+1 < len(ops) {
 			cur, next := ops[k], ops[k+1]
 			adjacent := (next.oi <= cur.oi+1) && (next.ni <= cur.ni+1)
@@ -237,7 +237,7 @@ func unifiedU0(oldRaw, newRaw string) []string {
 			k++
 		}
 		k++
-		hunk := ops[start:k]
+		hunk := ops[h0:k]
 		var dels, adds []string
 		firstO, firstN := 0, 0
 		haveO, haveN := false, false
