@@ -242,6 +242,14 @@ func tidy(s string) string {
 // the escape as visible text — any lowercase letter in the URL looks like a
 // premature CSI terminator to it. Strip OSC 8 sequences first so the target
 // URL never leaks into the width count.
+//
+// This runs on every line, every frame — the vast majority of which have no
+// hyperlink at all. The strings.Contains check keeps that common path a
+// single linear scan with no allocation, instead of always paying for the
+// regexp engine (and the string it allocates) just to find nothing to strip.
 func visibleWidth(line string) int {
-	return reflowansi.PrintableRuneWidth(osc8RE.ReplaceAllString(line, ""))
+	if strings.Contains(line, "\x1b]8") {
+		line = osc8RE.ReplaceAllString(line, "")
+	}
+	return reflowansi.PrintableRuneWidth(line)
 }

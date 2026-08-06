@@ -2,6 +2,7 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -50,29 +51,43 @@ type urlTruncation struct {
 // vice versa) — same rule CommonMark itself uses.
 var fenceRE = regexp.MustCompile("^\\s*(`{3,}|~{3,})")
 
-// osc8Safe reports whether url is safe to embed as the target of an OSC 8
-// escape: every byte in the printable ASCII range 0x20–0x7E, matching what
-// the OSC 8 spec itself requires of a URI. bareURLLineRE's "\S+" happily
-// matches raw control bytes (BEL, ESC, ...) if the source markdown contains
-// them — embedding one verbatim in "\x1b]8;;<url>\x07" would let it
-// terminate the escape early (or start a new one) and inject arbitrary
-// terminal control sequences into the render.
+// osc8Target returns the string safe to embed as the target of an OSC 8
+// escape for url, and whether url can be linked at all.
+//
+// Bytes in the OSC 8 URI's required printable-ASCII range (0x20–0x7E) pass
+// through unchanged. Bytes above that range are legitimate UTF-8 for a
+// non-ASCII/IDN URL (an accented domain, a CJK path, ...) — real content,
+// not an attack — so they're percent-encoded, the standard way to embed
+// non-ASCII bytes in a URI, rather than rejected outright.
+//
+// C0 control bytes (0x00–0x1F) and DEL (0x7F) return ok=false instead:
+// bareURLLineRE's "\S+" happily matches a raw BEL or ESC if the source
+// markdown contains one, and embedding it verbatim in
+// "\x1b]8;;<url>\x07" would let it terminate the escape early (or start a
+// new one) and inject arbitrary terminal control sequences into the
+// render. Percent-encoding wouldn't help here — it's the byte's role as a
+// terminal control character that's dangerous, not its role as URI content
+// — so these are excluded rather than escaped.
 //
 // This gates only the hyperlink attachment in linkifyTruncations, not the
 // display-text truncation in truncateBareURLs: the truncated text is plain
 // markdown, rendered exactly the way glamour already renders any bare URL's
 // raw bytes today — no new escape sequence is built from it, so no new
-// injection surface. Excluding it from truncation entirely would also have
-// silently reintroduced the wrap bug (issue #15) for any URL containing a
-// wide/non-ASCII rune (see the cell-width fix below), which is legitimate
-// content, not an attack.
-func osc8Safe(url string) bool {
+// injection surface.
+func osc8Target(url string) (target string, ok bool) {
+	var b strings.Builder
 	for i := 0; i < len(url); i++ {
-		if url[i] < 0x20 || url[i] > 0x7e {
-			return false
+		c := url[i]
+		switch {
+		case c < 0x20 || c == 0x7f:
+			return "", false
+		case c <= 0x7e:
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, "%%%02X", c)
 		}
 	}
-	return true
+	return b.String(), true
 }
 
 // truncateBareURLs rewrites raw markdown so that any bare-URL-only line
@@ -191,34 +206,36 @@ func cutToCellWidth(s string, maxCells int) string {
 // it after all) is returned unresolved rather than silently dropped, so the
 // caller can fall back to rendering that URL untruncated.
 //
-// A truncation whose full URL fails osc8Safe is skipped outright — not
-// reported as unresolved, since nothing needs a fallback retry: the visible,
-// width-correct truncated text is already in place and stays exactly as
-// rendered, just without a hyperlink wrapped around it. The cursor still has
-// to advance past that occurrence, though: leaving it stale would let a
-// LATER truncation whose display text happens to collide with this one (see
-// the cursor doc above) get matched against this unsafe truncation's own,
-// still-plain occurrence instead of its own — hyperlinking the wrong line,
-// the exact failure the forward-only cursor exists to prevent.
+// A truncation whose full URL fails osc8Target (a C0/DEL control byte) is
+// skipped outright — not reported as unresolved, since nothing needs a
+// fallback retry: the visible, width-correct truncated text is already in
+// place and stays exactly as rendered, just without a hyperlink wrapped
+// around it. The cursor still has to advance past that occurrence, though:
+// leaving it stale would let a LATER truncation whose display text happens
+// to collide with this one (see the cursor doc above) get matched against
+// this skipped truncation's own, still-plain occurrence instead of its own
+// — hyperlinking the wrong line, the exact failure the forward-only cursor
+// exists to prevent.
 func linkifyTruncations(rendered string, truncations []urlTruncation) (string, []urlTruncation) {
 	var unresolved []urlTruncation
 	cursor := 0
 	for _, t := range truncations {
 		start, end, ok := findPlainRange(rendered[cursor:], t.display)
 		if !ok {
-			if osc8Safe(t.full) {
+			if _, safe := osc8Target(t.full); safe {
 				unresolved = append(unresolved, t)
 			}
 			continue
 		}
 		start += cursor
 		end += cursor
-		if !osc8Safe(t.full) {
+		target, safe := osc8Target(t.full)
+		if !safe {
 			cursor = end
 			continue
 		}
 		r, g, b := hexToRGB(colorLink)
-		styled := osc8Open(t.full) +
+		styled := osc8Open(target) +
 			"\x1b[4;38;2;" + strconv.Itoa(r) + ";" + strconv.Itoa(g) + ";" + strconv.Itoa(b) + "m" +
 			t.display + "\x1b[0m" + osc8Close
 		rendered = rendered[:start] + styled + rendered[end:]

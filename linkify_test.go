@@ -119,10 +119,15 @@ func TestTruncateBareURLsFenceCharMustMatch(t *testing.T) {
 // cost would leave the assembled display text one cell over budget in that
 // locale, wrapping anyway and silently falling back to the pre-#15-fix bug
 // for every long URL rendered there.
+//
+// Mutates the package-global runewidth.DefaultCondition for its duration —
+// NOT safe to run under t.Parallel() (this test or any other in the package
+// that depends on runewidth's East Asian setting) without switching to a
+// scoped runewidth.Condition instead of the shared default.
 func TestTruncateBareURLsAccountsForWideEllipsis(t *testing.T) {
 	old := runewidth.DefaultCondition.EastAsianWidth
 	runewidth.DefaultCondition.EastAsianWidth = true
-	defer func() { runewidth.DefaultCondition.EastAsianWidth = old }()
+	t.Cleanup(func() { runewidth.DefaultCondition.EastAsianWidth = old })
 
 	url := "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
 	raw := "- " + url + "\n"
@@ -138,23 +143,37 @@ func TestTruncateBareURLsAccountsForWideEllipsis(t *testing.T) {
 	}
 }
 
-func TestOsc8SafeRejectsControlBytes(t *testing.T) {
-	if osc8Safe("https://example.test/\x07inject") {
-		t.Error("URL containing BEL should be unsafe")
+func TestOsc8TargetRejectsControlBytes(t *testing.T) {
+	if _, ok := osc8Target("https://example.test/\x07inject"); ok {
+		t.Error("URL containing BEL should be rejected")
 	}
-	if osc8Safe("https://example.test/\x1b]2;pwned\x07") {
-		t.Error("URL containing ESC should be unsafe")
+	if _, ok := osc8Target("https://example.test/\x1b]2;pwned\x07"); ok {
+		t.Error("URL containing ESC should be rejected")
 	}
-	if !osc8Safe("https://example.test/fine") {
-		t.Error("plain ASCII URL should be safe")
+	if target, ok := osc8Target("https://example.test/fine"); !ok || target != "https://example.test/fine" {
+		t.Errorf("plain ASCII URL should pass through unchanged: %q, %v", target, ok)
+	}
+}
+
+// A non-ASCII byte (accented/IDN URL) is real content, not an attack — it
+// must be percent-encoded into the OSC 8 target, not rejected outright.
+func TestOsc8TargetPercentEncodesNonASCII(t *testing.T) {
+	// "café" — 'é' is 0xC3 0xA9 in UTF-8.
+	target, ok := osc8Target("https://example.test/café")
+	if !ok {
+		t.Fatal("accented URL should be linkable")
+	}
+	if want := "https://example.test/caf%C3%A9"; target != want {
+		t.Errorf("target = %q, want %q", target, want)
 	}
 }
 
 // A control byte in the URL (BEL here) must never reach an OSC 8 escape —
 // embedding it verbatim would let it terminate the escape early and inject
 // arbitrary terminal control sequences from markdown content. The line's
-// visible, width-correct truncated text is still fine to keep (see osc8Safe's
-// doc comment) — it's the hyperlink specifically that must not exist.
+// visible, width-correct truncated text is still fine to keep (see
+// osc8Target's doc comment) — it's the hyperlink specifically that must not
+// exist.
 func TestLinkifyTruncationsSkipsUnsafeURL(t *testing.T) {
 	rendered := "\x1b[38;2;1;2;3mtext\x1b[0m"
 	truncations := []urlTruncation{

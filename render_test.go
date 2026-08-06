@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func renderFixture(t *testing.T, width int) string {
@@ -314,6 +316,31 @@ func TestControlByteURLNeverHyperlinked(t *testing.T) {
 	}
 }
 
+// End-to-end regression for AD1: an IDN/accented URL — real, non-ASCII
+// content, not an attack — must still get the full truncate-and-hyperlink
+// treatment, with its target percent-encoded rather than rejected outright.
+func TestAccentedURLTruncatedAndLinkedPercentEncoded(t *testing.T) {
+	url := "https://example.test/" + strings.Repeat("é", 40) // é is 2 bytes, 1 cell each
+	raw := "- " + url + "\n"
+	const width = 30
+
+	out, err := renderMarkdown(raw, width)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "…") {
+		t.Errorf("accented URL wasn't truncated:\n%q", out)
+	}
+	if !strings.Contains(out, "\x1b]8;;https://example.test/"+strings.Repeat("%C3%A9", 40)) {
+		t.Errorf("percent-encoded OSC 8 target not found:\n%q", out)
+	}
+	for i, line := range strings.Split(out, "\n") {
+		if w := visibleWidth(line); w > width {
+			t.Errorf("line %d: visible width %d exceeds width %d: %q", i, w, width, stripANSI(line))
+		}
+	}
+}
+
 // End-to-end regression for AB4: a URL made of East-Asian-wide runes must
 // never render wider than the pane. Measuring the fit/cut by rune count
 // would consistently undercount a wide-rune URL's actual terminal width,
@@ -353,6 +380,34 @@ func TestOSC8IsInvisible(t *testing.T) {
 	for i, line := range strings.Split(out, "\n") {
 		if w := visibleWidth(line); w > 24 {
 			t.Errorf("line %d: visibleWidth counted hyperlink target as visible: %d: %q", i, w, line)
+		}
+	}
+}
+
+// Documents (and guards) a load-bearing fact about the actual render path,
+// not just this package's own ANSI helpers: bubbletea v1.3.10's
+// standardRenderer re-truncates every line to the pane width on each frame
+// using charmbracelet/x/ansi.Truncate (standard_renderer.go:241) — a real
+// OSC-aware parser, unlike muesli/reflow's CSI-only one this package works
+// around elsewhere. A linkified line, once it already fits the pane width
+// (guaranteed by truncateBareURLs/visibleWidth above), must pass through
+// that second truncation pass unchanged: if x/ansi's parser mishandled OSC 8
+// the way reflow's does, bubbletea itself would corrupt the hyperlink on
+// every render even though this package's own output was correct.
+func TestOSC8SurvivesBubbleteaTruncate(t *testing.T) {
+	const url = "https://github.com/example/really-long-org-name/really-long-repo-name/pull/123456"
+	raw := "- " + url + "\n"
+	const width = 40
+
+	out, err := renderMarkdown(raw, width)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, line := range strings.Split(out, "\n") {
+		truncated := ansi.Truncate(line, width, "")
+		if stripANSI(truncated) != stripANSI(line) {
+			t.Errorf("line %d: bubbletea's ansi.Truncate altered visible text:\nbefore: %q\nafter:  %q",
+				i, stripANSI(line), stripANSI(truncated))
 		}
 	}
 }
