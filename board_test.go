@@ -128,6 +128,33 @@ func TestParseBoardFencedCodeBlockWithNoOpenItem(t *testing.T) {
 	}
 }
 
+// V2: an unclosed "<!--" inside a fenced code block must not open comment
+// mode — the fence check must win, or every line after it (including
+// sections and items past the fence) gets swallowed waiting for a "-->"
+// that may never come.
+func TestParseBoardFenceContainingUnclosedComment(t *testing.T) {
+	raw := "## 🧠 Needs action\n\n" +
+		"- Review PR #7\n" +
+		"```\n" +
+		"<!-- not a real comment, just fence content\n" +
+		"```\n\n" +
+		"## 🚧 In progress\n\n" +
+		"- Ship v2\n"
+	b, ok := parseBoard(raw)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if len(b.Sections) != 2 {
+		t.Fatalf("sections = %d, want 2 — everything after the fence was swallowed", len(b.Sections))
+	}
+	if len(b.Sections[0].Items) != 1 || b.Sections[0].Items[0].Key != "Review PR #7" {
+		t.Errorf("section 0 items = %+v, want [Review PR #7]", b.Sections[0].Items)
+	}
+	if len(b.Sections[1].Items) != 1 || b.Sections[1].Items[0].Key != "Ship v2" {
+		t.Errorf("section 1 items = %+v, want [Ship v2]", b.Sections[1].Items)
+	}
+}
+
 func TestNormalizeItem(t *testing.T) {
 	if got := normalizeItem("-   Fix   the  parser  "); got != "Fix the parser" {
 		t.Errorf("got %q", got)

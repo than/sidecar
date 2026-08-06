@@ -42,21 +42,17 @@ func parseBoard(raw string) (Board, bool) {
 			}
 			continue
 		}
-		if strings.HasPrefix(trimmed, "<!--") {
-			// A complete single-line comment ("<!-- x -->") needs no state —
-			// skip it outright, same as the multi-line open below, so editing
-			// its text doesn't attach to the preceding item's Raw.
-			if !strings.Contains(trimmed, "-->") {
-				inComment = true
-			}
-			continue
-		}
 		// A fenced code block's interior can contain lines that look like a
-		// heading or a bullet ("## fake", "- fake"); those must never be
-		// parsed as markup. Toggle on the fence delimiters themselves and
-		// skip section/item detection entirely while inside one — but a
-		// fence line still belongs to whatever item is currently open, same
-		// as any other continuation line.
+		// heading or a bullet ("## fake", "- fake"), or an unclosed "<!--";
+		// none of that must be parsed as markup or comment syntax. This
+		// check must come before the comment-open check below — an unclosed
+		// "<!--" inside a fence is just literal fence content, not the start
+		// of an HTML comment that would otherwise swallow every line after
+		// it (including the closing fence) waiting for a "-->" that may
+		// never appear. Toggle on the fence delimiters themselves and skip
+		// section/item detection entirely while inside one — but a fence
+		// line still belongs to whatever item is currently open, same as any
+		// other continuation line.
 		if strings.HasPrefix(trimmed, "```") {
 			inFence = !inFence
 			if item != nil {
@@ -67,6 +63,15 @@ func parseBoard(raw string) (Board, bool) {
 		if inFence {
 			if item != nil {
 				item.Raw += "\n" + ln
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "<!--") {
+			// A complete single-line comment ("<!-- x -->") needs no state —
+			// skip it outright, same as the multi-line open below, so editing
+			// its text doesn't attach to the preceding item's Raw.
+			if !strings.Contains(trimmed, "-->") {
+				inComment = true
 			}
 			continue
 		}
