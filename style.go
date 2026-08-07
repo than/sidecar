@@ -121,11 +121,12 @@ func styleConfig() ansi.StyleConfig {
 
 // bareURLLine matches a markdown line that is nothing but a bare URL — the
 // board convention for links (see CLAUDE.md: "bare URLs, each on its own
-// line") — whether it's an indented continuation line under a bullet or a
-// top-level list item in its own right. Groups: 1 = leading indent, 2 =
-// optional list marker (with its trailing space), 3 = the URL, 4 = trailing
-// whitespace, \r included so a CRLF board doesn't silently skip the fix.
-var bareURLLine = regexp.MustCompile(`^([ \t]*)((?:[-*+]\s+)?)(https?://\S+)([ \t\r]*)$`)
+// line") — whether it's an indented continuation line under a bullet, a
+// bulleted top-level item, or an ordered-list item (`1.`/`1)`). Groups: 1 =
+// leading indent, 2 = optional list marker (with its trailing space), 3 =
+// the URL, 4 = trailing whitespace, \r included so a CRLF board doesn't
+// silently skip the fix.
+var bareURLLine = regexp.MustCompile(`^([ \t]*)((?:(?:[-*+]|\d+[.)])\s+)?)(https?://\S+)([ \t\r]*)$`)
 
 // fenceLine matches a fenced-code-block delimiter (``` or ~~~, 3+ of the
 // same character). Bare URLs inside a fence are content the user typed
@@ -284,11 +285,23 @@ func restoreBareURLs(rendered string, urls []string, width int) string {
 // from the pane width by the caller). Output is post-processed to guarantee
 // the hard requirements: no trailing-space padding, at most one blank line
 // between blocks, no leading/trailing blank runs.
-func renderMarkdown(raw string, width int) (string, error) {
+//
+// linkify controls the bare-URL OSC 8 hyperlink path: true for the
+// interactive TUI, where the escape sequence is invisible to the terminal
+// and only the (possibly elided) display text is shown. false skips
+// stashBareURLs entirely, so bare URLs render as plain, complete,
+// un-elided text — for a non-TTY consumer (runStatic piped to a file,
+// grep, a CI log) whose stdout is not a terminal that would render the
+// hyperlink at all; there, showing the full plain URL beats hiding it
+// behind an escape sequence that reader can't see.
+func renderMarkdown(raw string, width int, linkify bool) (string, error) {
 	if width < 10 {
 		width = 10
 	}
-	raw, urls := stashBareURLs(raw)
+	var urls []string
+	if linkify {
+		raw, urls = stashBareURLs(raw)
+	}
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(styleConfig()),
 		glamour.WithWordWrap(width),

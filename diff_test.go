@@ -160,7 +160,7 @@ func TestChangedLinesDeletionNoSpuriousMark(t *testing.T) {
 func TestComposeMarkedNeverWiderThanWidth(t *testing.T) {
 	for _, w := range []int{20, 40, 80} {
 		lines, _ := func() ([]string, error) {
-			out, err := renderMarkdown("# Title\n\n- a fairly long bullet item that will wrap\n- short\n\nsome prose here too\n", w)
+			out, err := renderMarkdown("# Title\n\n- a fairly long bullet item that will wrap\n- short\n\nsome prose here too\n", w, true)
 			return strings.Split(out, "\n"), err
 		}()
 		all := map[int]bool{}

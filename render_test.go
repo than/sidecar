@@ -15,7 +15,7 @@ func renderFixture(t *testing.T, width int) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := renderMarkdown(string(raw), width)
+	out, err := renderMarkdown(string(raw), width, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,13 +121,57 @@ func TestBareURLIntact(t *testing.T) {
 	}
 }
 
+// linkify=false (the non-TTY path runStatic uses when stdout isn't a
+// terminal) must skip the stash/hyperlink machinery entirely — a plain,
+// complete URL for grep/CI/an editor, not an OSC 8 escape it can't render
+// and won't see through. At runStatic's real non-TTY width (80), the
+// fixture's URLs fit without wrapping at all — the common case linkify=false
+// is meant to help. (At a narrower width a long URL still hits the
+// original pre-#15 wrap-split via glamour's own autolink path; skipping the
+// stash doesn't and isn't meant to fix that — it only avoids hiding an
+// already-short URL behind an unreadable escape sequence.)
+func TestLinkifyFalseSkipsHyperlinking(t *testing.T) {
+	raw, err := os.ReadFile("testdata/REVIEW.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := renderMarkdown(string(raw), 78, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oscLinkRE.MatchString(out) {
+		t.Errorf("linkify=false still produced an OSC 8 hyperlink:\n%s", stripANSI(out))
+	}
+	if strings.Contains(out, "\x1fU") {
+		t.Errorf("a stash placeholder leaked with linkify=false:\n%s", stripANSI(out))
+	}
+	if !strings.Contains(stripANSI(out), "https://github.com/example/app/pull/412") {
+		t.Errorf("plain URL missing with linkify=false:\n%s", stripANSI(out))
+	}
+}
+
+// An ordered-list URL (`1. https://…`) is a real board shape, not just a
+// bulleted one — it must get the same fix, not fall through to the
+// original wrap-split bug.
+func TestBareURLOrderedListMarker(t *testing.T) {
+	raw := "1. https://example.test/ordered-list-item-long-enough-to-need-eliding\n"
+	out, err := renderMarkdown(raw, 40, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := oscLinkRE.FindStringSubmatch(out)
+	if m == nil || m[1] != "https://example.test/ordered-list-item-long-enough-to-need-eliding" {
+		t.Errorf("ordered-list URL wasn't hyperlinked: %v\n%s", m, stripANSI(out))
+	}
+}
+
 // Two bare URLs that elide to identical visible text must still each get
 // their own correct hyperlink target — no cross-linking (PR #18's confirmed
 // collision bug: a global text search re-found the first occurrence).
 func TestBareURLCollisionSafe(t *testing.T) {
 	raw := "- https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1\n" +
 		"- https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2\n"
-	out, err := renderMarkdown(raw, 40)
+	out, err := renderMarkdown(raw, 40, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +194,7 @@ func TestBareURLCollisionSafe(t *testing.T) {
 // unrelated to bare-URL handling) is out of scope here.
 func TestBareURLInFenceUntouched(t *testing.T) {
 	raw := "```\nhttps://example.test/verbatim-in-a-fence-that-is-long-enough-to-elide\n```\n"
-	out, err := renderMarkdown(raw, 40)
+	out, err := renderMarkdown(raw, 40, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +210,7 @@ func TestBareURLInFenceUntouched(t *testing.T) {
 // escape (injection) or get silently dropped (lossy percent-encoding).
 func TestBareURLUnsafeBytesEncoded(t *testing.T) {
 	raw := "- https://example.test/caf\u00e9-and-a-bell-\x07-in-the-middle\n"
-	out, err := renderMarkdown(raw, 40)
+	out, err := renderMarkdown(raw, 40, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +232,7 @@ func TestBareURLUnsafeBytesEncoded(t *testing.T) {
 // fix).
 func TestBareURLNestedIndentBudget(t *testing.T) {
 	raw := "- Parent\n  - https://example.test/nested-item-url-thats-long-enough-to-need-eliding\n"
-	out, err := renderMarkdown(raw, 30)
+	out, err := renderMarkdown(raw, 30, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +254,7 @@ func TestBareURLNestedIndentBudget(t *testing.T) {
 // hyperlinked, not skipped by the indented-code-block guard.
 func TestBareURLNestedListContinuationNotMistakenForCode(t *testing.T) {
 	raw := "- Parent\n  - Child item\n    https://example.test/nested-continuation-line-long-enough-to-elide\n"
-	out, err := renderMarkdown(raw, 30)
+	out, err := renderMarkdown(raw, 30, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,11 +268,11 @@ func TestBareURLNestedListContinuationNotMistakenForCode(t *testing.T) {
 // but its elided display text happens to be identical — the diff key has to
 // retain the OSC 8 target, not just the visible text.
 func TestChangedLinesSeesURLTargetChange(t *testing.T) {
-	before, err := renderMarkdown("- https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1\n", 40)
+	before, err := renderMarkdown("- https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1\n", 40, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	after, err := renderMarkdown("- https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2\n", 40)
+	after, err := renderMarkdown("- https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2\n", 40, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +308,7 @@ func TestHyperlinkSurvivesDownstreamTruncation(t *testing.T) {
 // room — restoreBareURLs used to discard everything after the placeholder.
 func TestBareURLKeepsTrailingContent(t *testing.T) {
 	raw := "See the docs at\nhttps://example.test/reasonably-long-path-name\nfor more information, seriously.\n"
-	out, err := renderMarkdown(raw, 40)
+	out, err := renderMarkdown(raw, 40, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +349,7 @@ func TestBareURLNoRoomDropsRatherThanOverflows(t *testing.T) {
 // wrap-split bug.
 func TestBareURLCRLFStillStashed(t *testing.T) {
 	raw := "- https://example.test/crlf-board-long-enough-to-need-eliding\r\n"
-	out, err := renderMarkdown(raw, 40)
+	out, err := renderMarkdown(raw, 40, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +364,7 @@ func TestBareURLCRLFStillStashed(t *testing.T) {
 // hyperlinked.
 func TestBareURLInIndentedCodeBlockUntouched(t *testing.T) {
 	raw := "Some paragraph.\n\n    https://example.test/indented-code-block-verbatim-text\n"
-	out, err := renderMarkdown(raw, 40)
+	out, err := renderMarkdown(raw, 40, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +378,7 @@ func TestBareURLInIndentedCodeBlockUntouched(t *testing.T) {
 
 // Emoji section markers are double-width; wrapping must account for that.
 func TestEmojiHeadingWidth(t *testing.T) {
-	out, err := renderMarkdown("## 🔴 Needs action right now with a long heading tail end", 40)
+	out, err := renderMarkdown("## 🔴 Needs action right now with a long heading tail end", 40, true)
 	if err != nil {
 		t.Fatal(err)
 	}
