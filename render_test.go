@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 func renderFixture(t *testing.T, width int) string {
@@ -38,16 +40,13 @@ func TestCompactSpacing(t *testing.T) {
 }
 
 // NEVER render wider than the requested width — padded/overwide lines wrap
-// in the pane and fake double-spacing. Bare-URL-only lines are the one
-// deliberate exception: they're kept intact on one line even past the
-// width rather than split mid-URL (see TestBareURLIntact and issue #15).
+// in the pane and fake double-spacing. This holds even for bare-URL lines
+// wider than the width: their OSC 8 target carries the full URL, but the
+// visible display text is elided to fit (see TestBareURLIntact, issue #15).
 func TestNeverWiderThanWidth(t *testing.T) {
 	for _, width := range []int{40, 60, 78} {
 		out := renderFixture(t, width)
 		for i, line := range strings.Split(out, "\n") {
-			if strings.Contains(line, "https://") || strings.Contains(line, "http://") {
-				continue
-			}
 			if w := visibleWidth(line); w > width {
 				t.Errorf("width %d, line %d: visible width %d: %q",
 					width, i, w, stripANSI(line))
@@ -66,28 +65,155 @@ func TestNoTrailingSpacePadding(t *testing.T) {
 	}
 }
 
-// Bare URLs must survive intact on a single line so Ghostty's link
-// detection can make them clickable — even at pane widths narrower than
-// the URL itself, which is the common case and is what used to hard-split
-// mid-URL (issue #15).
+// oscLinkRE finds an OSC 8 hyperlink's target and display text. The display
+// text carries its own SGR styling, so it isn't ANSI-escape-free — match
+// non-greedily up to the closing OSC 8 rather than excluding ESC outright.
+var oscLinkRE = regexp.MustCompile(`(?s)\x1b]8;;([^\x07\n]*)\x07(.*?)\x1b]8;;\x07`)
+
+// Bare URLs must be reachable via a single, complete OSC 8 hyperlink on one
+// line — even at pane widths narrower than the URL itself, which is the
+// common case and is what used to hard-split mid-URL (issue #15), and later
+// what a naive fix let the viewport silently truncate instead.
 func TestBareURLIntact(t *testing.T) {
-	out := stripANSI(renderFixture(t, 40))
+	out := renderFixture(t, 40)
 	for _, url := range []string{
 		"https://github.com/example/app/pull/412",
 		"https://qa.example.dev/checkout-race",
 	} {
 		found := false
 		for _, line := range strings.Split(out, "\n") {
-			if n := strings.Count(line, url); n > 0 {
+			for _, m := range oscLinkRE.FindAllStringSubmatch(line, -1) {
+				if m[1] != url {
+					continue
+				}
 				found = true
-				if strings.Count(line, "http") > 1 {
-					t.Errorf("URL duplicated on line: %q", line)
+				if n := strings.Count(line, "\x1b]8;;"+url+"\x07"); n > 1 {
+					t.Errorf("target %s duplicated on line: %q", url, line)
 				}
 			}
 		}
 		if !found {
-			t.Errorf("URL %s not intact on a single line:\n%s", url, out)
+			t.Errorf("URL %s has no complete OSC 8 hyperlink on one line:\n%s", url, stripANSI(out))
 		}
+	}
+}
+
+// Two bare URLs that elide to identical visible text must still each get
+// their own correct hyperlink target — no cross-linking (PR #18's confirmed
+// collision bug: a global text search re-found the first occurrence).
+func TestBareURLCollisionSafe(t *testing.T) {
+	raw := "- https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1\n" +
+		"- https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2\n"
+	out, err := renderMarkdown(raw, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	links := oscLinkRE.FindAllStringSubmatch(out, -1)
+	if len(links) != 2 {
+		t.Fatalf("want 2 hyperlinks, got %d:\n%s", len(links), stripANSI(out))
+	}
+	if links[0][1] != "https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1" {
+		t.Errorf("first link target wrong: %q", links[0][1])
+	}
+	if links[1][1] != "https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2" {
+		t.Errorf("second link target wrong: %q", links[1][1])
+	}
+}
+
+// A bare URL inside a fenced code block is content the user typed verbatim
+// — stashBareURLs must leave it alone entirely (no OSC 8 hyperlink, no
+// leaked placeholder). Whatever glamour itself does with fenced content
+// (it word-wraps long hyphenated lines same as any other text — pre-existing,
+// unrelated to bare-URL handling) is out of scope here.
+func TestBareURLInFenceUntouched(t *testing.T) {
+	raw := "```\nhttps://example.test/verbatim-in-a-fence-that-is-long-enough-to-elide\n```\n"
+	out, err := renderMarkdown(raw, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oscLinkRE.MatchString(out) {
+		t.Errorf("URL inside a fence got hyperlinked:\n%s", stripANSI(out))
+	}
+	if strings.Contains(out, "\x1fU") {
+		t.Errorf("a stash placeholder leaked into fenced output:\n%s", stripANSI(out))
+	}
+}
+
+// A control byte or non-ASCII byte in a URL must not break out of the OSC 8
+// escape (injection) or get silently dropped (lossy percent-encoding).
+func TestBareURLUnsafeBytesEncoded(t *testing.T) {
+	raw := "- https://example.test/caf\u00e9-and-a-bell-\x07-in-the-middle\n"
+	out, err := renderMarkdown(raw, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := oscLinkRE.FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no hyperlink found:\n%s", stripANSI(out))
+	}
+	if strings.ContainsAny(m[1], "\x07\x1b") {
+		t.Fatalf("target still contains a raw control byte: %q", m[1])
+	}
+	if !strings.Contains(m[1], "%C3%A9") || !strings.Contains(m[1], "%07") {
+		t.Errorf("target wasn't percent-encoded correctly: %q", m[1])
+	}
+}
+
+// A nested list item's budget must account for its actual indent, not a
+// guessed constant (PR #18's confirmed bug: a hard-coded top-level-bullet
+// reserve overshot on nested items and re-broke the line it was meant to
+// fix).
+func TestBareURLNestedIndentBudget(t *testing.T) {
+	raw := "- Parent\n  - https://example.test/nested-item-url-thats-long-enough-to-need-eliding\n"
+	out, err := renderMarkdown(raw, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, line := range strings.Split(out, "\n") {
+		if w := visibleWidth(line); w > 30 {
+			t.Errorf("line %d: visible width %d > 30: %q", i, w, stripANSI(line))
+		}
+	}
+	m := oscLinkRE.FindStringSubmatch(out)
+	if m == nil || m[1] != "https://example.test/nested-item-url-thats-long-enough-to-need-eliding" {
+		t.Errorf("nested URL lost its hyperlink target: %v", m)
+	}
+}
+
+// changedLines must still detect a change when only a URL's target differs
+// but its elided display text happens to be identical — the diff key has to
+// retain the OSC 8 target, not just the visible text.
+func TestChangedLinesSeesURLTargetChange(t *testing.T) {
+	before, err := renderMarkdown("- https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1\n", 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := renderMarkdown("- https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2\n", 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := changedLines(strings.Split(before, "\n"), strings.Split(after, "\n"))
+	if len(changed) == 0 {
+		t.Errorf("target-only URL change went undetected")
+	}
+}
+
+// The gate PR #18 could never verify: bubbletea's renderer and lipgloss's
+// MaxWidth both truncate the final frame to the pane width using
+// charmbracelet/x/ansi, which understands OSC 8 and only cuts visible
+// cells. If that ever regresses to an OSC-blind truncator, a hyperlinked
+// line gets cut inside the escape and the display text (which comes after
+// it) is dropped outright — this pins the assumption directly.
+func TestHyperlinkSurvivesDownstreamTruncation(t *testing.T) {
+	target := "https://example.test/downstream-truncation-gate"
+	line := "prefix " + hyperlink(target, "short")
+	got := xansi.Truncate(line, 20, "")
+	m := oscLinkRE.FindStringSubmatch(got)
+	if m == nil || m[1] != target {
+		t.Fatalf("x/ansi.Truncate dropped or corrupted the hyperlink: %q", got)
+	}
+	if !strings.Contains(stripANSI(got), "short") {
+		t.Errorf("x/ansi.Truncate dropped the display text: %q", got)
 	}
 }
 

@@ -7,7 +7,8 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/ansi"
-	reflowansi "github.com/muesli/reflow/ansi"
+	xansi "github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
 )
 
@@ -123,52 +124,144 @@ func styleConfig() ansi.StyleConfig {
 // board convention for links (see CLAUDE.md: "bare URLs, each on its own
 // line") — whether it's an indented continuation line under a bullet or a
 // top-level list item in its own right.
-var bareURLLine = regexp.MustCompile(`(?m)^([ \t]*(?:[-*+]\s+)?)(https?://\S+)([ \t]*)$`)
+var bareURLLine = regexp.MustCompile(`^([ \t]*(?:[-*+]\s+)?)(https?://\S+)([ \t]*)$`)
+
+// fenceLine matches a fenced-code-block delimiter (``` or ~~~, 3+ of the
+// same character). Bare URLs inside a fence are content the user typed
+// verbatim and are never word-wrapped by glamour in the first place, so
+// stashBareURLs leaves them alone.
+var fenceLine = regexp.MustCompile("^[ \t]*(```+|~~~+)")
 
 // urlPlaceholder is a short, markdown-inert stand-in for a stashed URL. It
 // uses the ASCII unit separator as a delimiter so it can never collide with
-// real board text, and stays well under any realistic wrap width.
+// real board text, and stays well under any realistic wrap width — short
+// enough that glamour's word-wrap never has a reason to touch it.
 func urlPlaceholder(i int) string {
-	return fmt.Sprintf("\x1fsidecarurl%d\x1f", i)
+	return fmt.Sprintf("\x1fU%d\x1f", i)
 }
 
 // stashBareURLs replaces every bare-URL-only line with a short placeholder,
-// returning the stashed URLs in order. Glamour's word-wrap hard-splits a
-// long link token mid-URL once it exceeds the wrap width (it treats the
-// autolink's rendered ANSI run differently from plain text and force-breaks
-// it instead of pushing the whole word to the next line) — the placeholder
-// keeps such lines out of that path entirely. restoreBareURLs puts the real,
-// styled URL back after rendering.
+// returning the stashed URLs in order (skipping lines inside fenced code
+// blocks). Glamour's word-wrap hard-splits a long link token mid-URL once it
+// exceeds the wrap width — it treats the autolink's rendered ANSI run
+// differently from plain text and force-breaks it instead of pushing the
+// whole word to the next line — so the placeholder keeps such lines out of
+// that path entirely. restoreBareURLs puts the real, styled, hyperlinked URL
+// back after rendering.
 func stashBareURLs(raw string) (string, []string) {
+	lines := strings.Split(raw, "\n")
 	var urls []string
-	out := bareURLLine.ReplaceAllStringFunc(raw, func(line string) string {
-		m := bareURLLine.FindStringSubmatch(line)
-		urls = append(urls, m[2])
-		return m[1] + urlPlaceholder(len(urls)-1)
-	})
-	return out, urls
+	var fenceChar byte
+	for i, line := range lines {
+		if m := fenceLine.FindStringSubmatch(line); m != nil {
+			c := m[1][0]
+			switch fenceChar {
+			case 0:
+				fenceChar = c
+			case c:
+				fenceChar = 0
+			}
+			continue
+		}
+		if fenceChar != 0 {
+			continue
+		}
+		if m := bareURLLine.FindStringSubmatch(line); m != nil {
+			urls = append(urls, m[2])
+			lines[i] = m[1] + urlPlaceholder(len(urls)-1)
+		}
+	}
+	return strings.Join(lines, "\n"), urls
 }
 
-// restoreBareURLs swaps each placeholder back for its real URL, styled the
-// same as glamour would style a Link (colorLink, underlined) — so a
-// bare-URL-only line always survives on one physical line, clickable, no
-// matter how far it overflows the pane width. Everything after the
-// placeholder is dropped rather than kept: it's block-margin padding sized
-// for the short placeholder, not the real URL, and would just trail stale
-// spaces past the restored line.
-func restoreBareURLs(rendered string, urls []string) string {
+// oscOpen/oscClose delimit an OSC 8 hyperlink. BEL-terminated rather than
+// ST (ESC \\): this codebase's other ANSI helpers only recognize a bare
+// ESC[0m-style reset, and BEL is a single unambiguous byte to bound a
+// terminator scan on.
+const oscOpen = "\x1b]8;;"
+const oscBEL = "\x07"
+const oscClose = oscOpen + oscBEL
+
+// oscTarget encodes url for safe use as an OSC 8 target: bytes that could
+// terminate the escape early (control bytes, DEL) or aren't valid in a URI
+// (anything non-ASCII) are percent-encoded rather than rejected, so a
+// pathological or non-ASCII URL still gets a working, complete link instead
+// of silently losing its hyperlink.
+func oscTarget(url string) string {
+	var b strings.Builder
+	for i := 0; i < len(url); i++ {
+		c := url[i]
+		if c < 0x20 || c == 0x7f || c >= 0x80 {
+			fmt.Fprintf(&b, "%%%02X", c)
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
+}
+
+// hyperlink wraps display in an OSC 8 hyperlink pointing at target. display
+// carries its own SGR styling; the OSC 8 escapes only add the link.
+func hyperlink(target, display string) string {
+	return oscOpen + oscTarget(target) + oscBEL + display + oscClose
+}
+
+// elideURL returns url unchanged if it fits within budget cells, otherwise
+// cuts it (cell-width aware, not byte- or rune-count aware) to make room for
+// a trailing ellipsis whose own width is measured rather than assumed to be
+// one cell. budget <= 0 is a pathological deeply-nested-bullet-in-a-tiny-pane
+// case; it still returns a single ellipsis rather than nothing, since an
+// empty display text would be an invisible — but still clickable — link.
+func elideURL(url string, budget int) string {
+	if runewidth.StringWidth(url) <= budget {
+		return url
+	}
+	ellipsisWidth := runewidth.RuneWidth('…')
+	keep := budget - ellipsisWidth
+	if keep <= 0 {
+		return "…"
+	}
+	var b strings.Builder
+	w := 0
+	for _, r := range url {
+		rw := runewidth.RuneWidth(r)
+		if w+rw > keep {
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	b.WriteRune('…')
+	return b.String()
+}
+
+// restoreBareURLs swaps each placeholder back for its real URL, wrapped in
+// an OSC 8 hyperlink and styled like glamour's own Link (colorLink,
+// underlined). The visible text is elided to fit whatever width remains on
+// its line — measured from the actual rendered prefix (bullet, indent,
+// nesting), not guessed — but the hyperlink target always carries the full,
+// untruncated URL, so the link opens the right place regardless of how much
+// of it is shown. Each URL has its own index-keyed placeholder, so two URLs
+// that happen to elide to identical visible text can never cross-link —
+// there's nothing to search for and collide on.
+func restoreBareURLs(rendered string, urls []string, width int) string {
 	if len(urls) == 0 {
 		return rendered
 	}
 	lines := strings.Split(rendered, "\n")
 	for i, url := range urls {
-		styled := termenv.String(url).Foreground(termenv.TrueColor.Color(colorLink)).Underline().String()
 		ph := urlPlaceholder(i)
 		for li, line := range lines {
-			if idx := strings.Index(line, ph); idx >= 0 {
-				lines[li] = line[:idx] + styled
-				break
+			idx := strings.Index(line, ph)
+			if idx < 0 {
+				continue
 			}
+			prefix := line[:idx]
+			budget := width - visibleWidth(prefix)
+			display := elideURL(url, budget)
+			styled := termenv.String(display).Foreground(termenv.TrueColor.Color(colorLink)).Underline().String()
+			lines[li] = prefix + hyperlink(url, styled)
+			break
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -197,7 +290,7 @@ func renderMarkdown(raw string, width int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	out = restoreBareURLs(out, urls)
+	out = restoreBareURLs(out, urls, width)
 	return tidy(out), nil
 }
 
@@ -230,7 +323,11 @@ func tidy(s string) string {
 	return strings.Join(out, "\n")
 }
 
-// visibleWidth is the printable cell width of a line, ignoring ANSI codes.
+// visibleWidth is the printable cell width of a line, ignoring ANSI codes —
+// SGR and OSC 8 hyperlinks alike. x/ansi's parser understands OSC; the
+// muesli/reflow width counter this used to call does not (it only
+// recognizes CSI's `[0-9;]*[A-Za-z]` terminator), so an OSC 8-wrapped line
+// would otherwise measure with the link target counted as visible text.
 func visibleWidth(line string) int {
-	return reflowansi.PrintableRuneWidth(line)
+	return xansi.StringWidth(line)
 }
