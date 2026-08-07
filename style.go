@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/ansi"
 	xansi "github.com/charmbracelet/x/ansi"
-	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
 )
 
@@ -158,14 +157,23 @@ func stashBareURLs(raw string) (string, []string) {
 	lines := strings.Split(raw, "\n")
 	var urls []string
 	var fenceChar byte
+	var fenceLen int
+	prevBlank := true // document start counts as a boundary, same as CommonMark
 	for i, line := range lines {
+		wasPrevBlank := prevBlank
+		prevBlank = strings.TrimSpace(line) == ""
+
 		if m := fenceLine.FindStringSubmatch(line); m != nil {
-			c := m[1][0]
-			switch fenceChar {
-			case 0:
-				fenceChar = c
-			case c:
-				fenceChar = 0
+			c, n := m[1][0], len(m[1])
+			switch {
+			case fenceChar == 0:
+				fenceChar, fenceLen = c, n
+			case c == fenceChar && n >= fenceLen:
+				// Per CommonMark, a fence only closes on a run of the same
+				// character at least as long as the one that opened it —
+				// a shorter or different-character run (e.g. a "~~~" line
+				// inside a "~~~~"-opened block) is just content.
+				fenceChar, fenceLen = 0, 0
 			}
 			continue
 		}
@@ -177,13 +185,13 @@ func stashBareURLs(raw string) (string, []string) {
 			continue
 		}
 		indent, marker := m[1], m[2]
-		// A 4-space (or tab) indent with no list marker is CommonMark's
-		// indented code block — verbatim content, leave it untouched, same
-		// as a fence. This can also false-skip a deeply-nested bullet
-		// continuation line (glamour's LevelIndent is 2/level, so level 2+
-		// reaches 4): falling back to the pre-fix wrap-split behavior there
-		// is the safer failure than hyperlinking real code.
-		if marker == "" && (strings.Contains(indent, "\t") || len(indent) >= 4) {
+		// A 4-space (or tab) indent with no list marker and a blank line
+		// immediately before it is CommonMark's indented code block —
+		// verbatim content, leave it untouched, same as a fence. Requiring
+		// the preceding blank line is what tells it apart from a nested
+		// list's lazy continuation line, which reaches the same 4-space
+		// depth (glamour's LevelIndent is 2/level) but isn't code.
+		if marker == "" && (strings.Contains(indent, "\t") || len(indent) >= 4) && wasPrevBlank {
 			continue
 		}
 		urls = append(urls, m[3])
@@ -224,33 +232,6 @@ func hyperlink(target, display string) string {
 	return oscOpen + oscTarget(target) + oscBEL + display + oscClose
 }
 
-// elideURL returns url unchanged if it fits within budget cells, otherwise
-// cuts it (cell-width aware, not byte- or rune-count aware) to make room for
-// a trailing ellipsis whose own width is measured rather than assumed to be
-// one cell. Caller guarantees budget >= 1.
-func elideURL(url string, budget int) string {
-	if runewidth.StringWidth(url) <= budget {
-		return url
-	}
-	ellipsisWidth := runewidth.RuneWidth('…')
-	keep := budget - ellipsisWidth
-	if keep <= 0 {
-		return "…"
-	}
-	var b strings.Builder
-	w := 0
-	for _, r := range url {
-		rw := runewidth.RuneWidth(r)
-		if w+rw > keep {
-			break
-		}
-		b.WriteRune(r)
-		w += rw
-	}
-	b.WriteRune('…')
-	return b.String()
-}
-
 // restoreBareURLs swaps each placeholder back for its real URL, wrapped in
 // an OSC 8 hyperlink and styled like glamour's own Link (colorLink,
 // underlined). The visible text is elided to fit whatever width remains on
@@ -284,7 +265,13 @@ func restoreBareURLs(rendered string, urls []string, width int) string {
 				lines[li] = prefix + rest
 				break
 			}
-			display := elideURL(url, budget)
+			// xansi.Truncate, not go-runewidth: it's grapheme-cluster aware
+			// (a VS16 emoji presentation sequence is one cluster but two
+			// runes) and it's the same measurement visibleWidth uses to
+			// enforce the pane-width invariant. Measuring the budget with
+			// one metric and building the display text with a different
+			// one is exactly how that invariant would quietly break again.
+			display := xansi.Truncate(url, budget, "…")
 			styled := termenv.String(display).Foreground(termenv.TrueColor.Color(colorLink)).Underline().String()
 			lines[li] = prefix + hyperlink(url, styled) + rest
 			break
@@ -316,13 +303,15 @@ func renderMarkdown(raw string, width int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	out = restoreBareURLs(out, urls, width)
-	// Defensive: if a placeholder somehow didn't survive glamour intact (an
-	// unanticipated reflow edge case), strip the residual bytes rather than
-	// let a raw \x1f-delimited token land on screen — the URL is lost
-	// either way at that point; better an invisible failure than a garbled
-	// one.
-	out = residualPlaceholder.ReplaceAllString(out, "")
+	if len(urls) > 0 {
+		out = restoreBareURLs(out, urls, width)
+		// Defensive: if a placeholder somehow didn't survive glamour intact
+		// (an unanticipated reflow edge case), strip the residual bytes
+		// rather than let a raw \x1f-delimited token land on screen — the
+		// URL is lost either way at that point; better an invisible
+		// failure than a garbled one.
+		out = residualPlaceholder.ReplaceAllString(out, "")
+	}
 	return tidy(out), nil
 }
 

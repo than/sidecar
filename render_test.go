@@ -55,6 +55,29 @@ func TestNeverWiderThanWidth(t *testing.T) {
 	}
 }
 
+// The hyperlinked-line path has width-sensitive elision math the rest of
+// the renderer doesn't (restoreBareURLs' budget calculation), so it gets
+// its own sweep across every width from the render-width clamp floor up —
+// scoped to lines that actually contain a hyperlink, so it isn't tripped
+// up by glamour's own pre-existing, unrelated wrap imprecision on ordinary
+// text at odd widths (a real but out-of-scope issue: e.g. at width 15 a
+// plain non-URL blockquote line measures one cell over, independent of
+// anything in this file).
+func TestHyperlinkedLineNeverWiderThanWidth(t *testing.T) {
+	for w := 10; w <= 100; w++ {
+		out := renderFixture(t, w)
+		for i, line := range strings.Split(out, "\n") {
+			if !oscLinkRE.MatchString(line) {
+				continue
+			}
+			if got := visibleWidth(line); got > w {
+				t.Errorf("width %d, line %d: visible width %d: %q",
+					w, i, got, stripANSI(line))
+			}
+		}
+	}
+}
+
 // No trailing-space padding on any line (glow's -w padding bug).
 func TestNoTrailingSpacePadding(t *testing.T) {
 	out := renderFixture(t, 78)
@@ -177,6 +200,23 @@ func TestBareURLNestedIndentBudget(t *testing.T) {
 	m := oscLinkRE.FindStringSubmatch(out)
 	if m == nil || m[1] != "https://example.test/nested-item-url-thats-long-enough-to-need-eliding" {
 		t.Errorf("nested URL lost its hyperlink target: %v", m)
+	}
+}
+
+// A URL as its own continuation line under a 2-levels-deep nested bullet
+// reaches the same 4-space indent as an indented code block, but it's a
+// CommonMark lazy list continuation, not code — preceded by a non-blank
+// line (the child item itself), not a blank one. It must still be
+// hyperlinked, not skipped by the indented-code-block guard.
+func TestBareURLNestedListContinuationNotMistakenForCode(t *testing.T) {
+	raw := "- Parent\n  - Child item\n    https://example.test/nested-continuation-line-long-enough-to-elide\n"
+	out, err := renderMarkdown(raw, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := oscLinkRE.FindStringSubmatch(out)
+	if m == nil || m[1] != "https://example.test/nested-continuation-line-long-enough-to-elide" {
+		t.Errorf("nested list continuation URL wasn't hyperlinked (mistaken for indented code?): %v\n%s", m, stripANSI(out))
 	}
 }
 
