@@ -217,6 +217,81 @@ func TestHyperlinkSurvivesDownstreamTruncation(t *testing.T) {
 	}
 }
 
+// A bare-URL line that's a soft-wrapped continuation inside a multi-line
+// paragraph can have real content after the URL on the same rendered line
+// (e.g. "See docs at\nhttps://…\nfor more." reflows to one paragraph).
+// That trailing content must survive, and the elision budget must leave it
+// room — restoreBareURLs used to discard everything after the placeholder.
+func TestBareURLKeepsTrailingContent(t *testing.T) {
+	raw := "See the docs at\nhttps://example.test/reasonably-long-path-name\nfor more information, seriously.\n"
+	out, err := renderMarkdown(raw, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "for more") {
+		t.Errorf("trailing paragraph content after the URL was dropped:\n%s", plain)
+	}
+	for i, line := range strings.Split(out, "\n") {
+		if w := visibleWidth(line); w > 40 {
+			t.Errorf("line %d: visible width %d > 40: %q", i, w, stripANSI(line))
+		}
+	}
+}
+
+// budget < 1 (indent alone fills the pane) must drop the URL rather than
+// render a line wider than the pane — the one invariant every other line
+// in this renderer holds. Exercised directly against restoreBareURLs: a
+// markdown fixture that reliably produces a zero-budget nested indent
+// through the real glamour pipeline is brittle to construct, and this is
+// the exact boundary the fix claims to hold.
+func TestBareURLNoRoomDropsRatherThanOverflows(t *testing.T) {
+	prefix := strings.Repeat("x", 10) // consumes the entire width on its own
+	rendered := prefix + urlPlaceholder(0)
+	out := restoreBareURLs(rendered, []string{"https://example.test/no-room-left"}, 10)
+	if w := visibleWidth(out); w > 10 {
+		t.Errorf("visible width %d > 10: %q", w, out)
+	}
+	if strings.Contains(out, "\x1f") {
+		t.Errorf("placeholder leaked into output: %q", out)
+	}
+	if strings.Contains(out, "http") {
+		t.Errorf("URL text should have been dropped, not shown partially: %q", out)
+	}
+}
+
+// A CRLF board must still get the fix — bareURLLine's trailing-whitespace
+// class has to include \r or a CRLF board silently keeps the pre-fix
+// wrap-split bug.
+func TestBareURLCRLFStillStashed(t *testing.T) {
+	raw := "- https://example.test/crlf-board-long-enough-to-need-eliding\r\n"
+	out, err := renderMarkdown(raw, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := oscLinkRE.FindStringSubmatch(out)
+	if m == nil || m[1] != "https://example.test/crlf-board-long-enough-to-need-eliding" {
+		t.Errorf("CRLF board line wasn't hyperlinked: %v\n%s", m, stripANSI(out))
+	}
+}
+
+// A URL inside a 4-space indented code block is CommonMark verbatim
+// content, same as a fenced block — it must not be truncated or
+// hyperlinked.
+func TestBareURLInIndentedCodeBlockUntouched(t *testing.T) {
+	raw := "Some paragraph.\n\n    https://example.test/indented-code-block-verbatim-text\n"
+	out, err := renderMarkdown(raw, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oscLinkRE.MatchString(out) {
+		t.Errorf("URL inside an indented code block got hyperlinked:\n%s", stripANSI(out))
+	}
+	if strings.Contains(out, "\x1fU") {
+		t.Errorf("a stash placeholder leaked into indented-code-block output:\n%s", stripANSI(out))
+	}
+}
+
 // Emoji section markers are double-width; wrapping must account for that.
 func TestEmojiHeadingWidth(t *testing.T) {
 	out, err := renderMarkdown("## 🔴 Needs action right now with a long heading tail end", 40)

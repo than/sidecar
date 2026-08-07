@@ -97,7 +97,11 @@ func main() {
 
 // runStatic renders the file once to stdout and exits — no watching, no
 // alt-screen. Handy for piping, CI, and quick inline checks. Width is the
-// terminal width (minus 2) when stdout is a TTY, else 80.
+// terminal width (minus 2) when stdout is a TTY, else 80. A bare URL longer
+// than that width is still elided in the visible text (the full URL lives
+// only in its OSC 8 target) — fine for a terminal, but grep, an editor, or
+// a CI log viewer reading the piped bytes plain won't see the untruncated
+// URL.
 func runStatic(args []string) int {
 	path := defaultBoardPath()
 	if len(args) > 0 {

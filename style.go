@@ -123,8 +123,10 @@ func styleConfig() ansi.StyleConfig {
 // bareURLLine matches a markdown line that is nothing but a bare URL — the
 // board convention for links (see CLAUDE.md: "bare URLs, each on its own
 // line") — whether it's an indented continuation line under a bullet or a
-// top-level list item in its own right.
-var bareURLLine = regexp.MustCompile(`^([ \t]*(?:[-*+]\s+)?)(https?://\S+)([ \t]*)$`)
+// top-level list item in its own right. Groups: 1 = leading indent, 2 =
+// optional list marker (with its trailing space), 3 = the URL, 4 = trailing
+// whitespace, \r included so a CRLF board doesn't silently skip the fix.
+var bareURLLine = regexp.MustCompile(`^([ \t]*)((?:[-*+]\s+)?)(https?://\S+)([ \t\r]*)$`)
 
 // fenceLine matches a fenced-code-block delimiter (``` or ~~~, 3+ of the
 // same character). Bare URLs inside a fence are content the user typed
@@ -140,14 +142,18 @@ func urlPlaceholder(i int) string {
 	return fmt.Sprintf("\x1fU%d\x1f", i)
 }
 
+// residualPlaceholder matches any urlPlaceholder token — a fallback sweep
+// for the case restoreBareURLs' own placeholder search doesn't find one.
+var residualPlaceholder = regexp.MustCompile(`\x1fU\d+\x1f`)
+
 // stashBareURLs replaces every bare-URL-only line with a short placeholder,
-// returning the stashed URLs in order (skipping lines inside fenced code
-// blocks). Glamour's word-wrap hard-splits a long link token mid-URL once it
-// exceeds the wrap width — it treats the autolink's rendered ANSI run
-// differently from plain text and force-breaks it instead of pushing the
-// whole word to the next line — so the placeholder keeps such lines out of
-// that path entirely. restoreBareURLs puts the real, styled, hyperlinked URL
-// back after rendering.
+// returning the stashed URLs in order (skipping lines inside fenced or
+// indented code blocks). Glamour's word-wrap hard-splits a long link token
+// mid-URL once it exceeds the wrap width — it treats the autolink's
+// rendered ANSI run differently from plain text and force-breaks it instead
+// of pushing the whole word to the next line — so the placeholder keeps
+// such lines out of that path entirely. restoreBareURLs puts the real,
+// styled, hyperlinked URL back after rendering.
 func stashBareURLs(raw string) (string, []string) {
 	lines := strings.Split(raw, "\n")
 	var urls []string
@@ -166,10 +172,22 @@ func stashBareURLs(raw string) (string, []string) {
 		if fenceChar != 0 {
 			continue
 		}
-		if m := bareURLLine.FindStringSubmatch(line); m != nil {
-			urls = append(urls, m[2])
-			lines[i] = m[1] + urlPlaceholder(len(urls)-1)
+		m := bareURLLine.FindStringSubmatch(line)
+		if m == nil {
+			continue
 		}
+		indent, marker := m[1], m[2]
+		// A 4-space (or tab) indent with no list marker is CommonMark's
+		// indented code block — verbatim content, leave it untouched, same
+		// as a fence. This can also false-skip a deeply-nested bullet
+		// continuation line (glamour's LevelIndent is 2/level, so level 2+
+		// reaches 4): falling back to the pre-fix wrap-split behavior there
+		// is the safer failure than hyperlinking real code.
+		if marker == "" && (strings.Contains(indent, "\t") || len(indent) >= 4) {
+			continue
+		}
+		urls = append(urls, m[3])
+		lines[i] = indent + marker + urlPlaceholder(len(urls)-1) + m[4]
 	}
 	return strings.Join(lines, "\n"), urls
 }
@@ -209,9 +227,7 @@ func hyperlink(target, display string) string {
 // elideURL returns url unchanged if it fits within budget cells, otherwise
 // cuts it (cell-width aware, not byte- or rune-count aware) to make room for
 // a trailing ellipsis whose own width is measured rather than assumed to be
-// one cell. budget <= 0 is a pathological deeply-nested-bullet-in-a-tiny-pane
-// case; it still returns a single ellipsis rather than nothing, since an
-// empty display text would be an invisible — but still clickable — link.
+// one cell. Caller guarantees budget >= 1.
 func elideURL(url string, budget int) string {
 	if runewidth.StringWidth(url) <= budget {
 		return url
@@ -238,12 +254,17 @@ func elideURL(url string, budget int) string {
 // restoreBareURLs swaps each placeholder back for its real URL, wrapped in
 // an OSC 8 hyperlink and styled like glamour's own Link (colorLink,
 // underlined). The visible text is elided to fit whatever width remains on
-// its line — measured from the actual rendered prefix (bullet, indent,
-// nesting), not guessed — but the hyperlink target always carries the full,
-// untruncated URL, so the link opens the right place regardless of how much
-// of it is shown. Each URL has its own index-keyed placeholder, so two URLs
-// that happen to elide to identical visible text can never cross-link —
-// there's nothing to search for and collide on.
+// its line — measured from the actual rendered prefix and suffix (bullet,
+// indent, nesting, and anything glamour reflowed onto the same physical
+// line after the URL, e.g. a soft-wrapped paragraph continuation), not
+// guessed — but the hyperlink target always carries the full, untruncated
+// URL, so the link opens the right place regardless of how much of it is
+// shown. Each URL has its own index-keyed placeholder, so two URLs that
+// happen to elide to identical visible text can never cross-link — there's
+// nothing to search for and collide on. If there's no room at all (a
+// pathologically narrow pane with a deep indent), the URL is dropped
+// rather than drawn — an over-width line would break the one invariant
+// every other line in this renderer holds.
 func restoreBareURLs(rendered string, urls []string, width int) string {
 	if len(urls) == 0 {
 		return rendered
@@ -257,10 +278,15 @@ func restoreBareURLs(rendered string, urls []string, width int) string {
 				continue
 			}
 			prefix := line[:idx]
-			budget := width - visibleWidth(prefix)
+			rest := line[idx+len(ph):]
+			budget := width - visibleWidth(prefix) - visibleWidth(rest)
+			if budget < 1 {
+				lines[li] = prefix + rest
+				break
+			}
 			display := elideURL(url, budget)
 			styled := termenv.String(display).Foreground(termenv.TrueColor.Color(colorLink)).Underline().String()
-			lines[li] = prefix + hyperlink(url, styled)
+			lines[li] = prefix + hyperlink(url, styled) + rest
 			break
 		}
 	}
@@ -291,6 +317,12 @@ func renderMarkdown(raw string, width int) (string, error) {
 		return "", err
 	}
 	out = restoreBareURLs(out, urls, width)
+	// Defensive: if a placeholder somehow didn't survive glamour intact (an
+	// unanticipated reflow edge case), strip the residual bytes rather than
+	// let a raw \x1f-delimited token land on screen — the URL is lost
+	// either way at that point; better an invisible failure than a garbled
+	// one.
+	out = residualPlaceholder.ReplaceAllString(out, "")
 	return tidy(out), nil
 }
 
