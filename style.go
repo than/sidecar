@@ -120,11 +120,12 @@ func styleConfig() ansi.StyleConfig {
 }
 
 // bareURLLine matches a markdown line that is nothing but a bare URL — the
-// board convention for links (see CLAUDE.md: "bare URLs, each on its own
-// line") — whether it's an indented continuation line under a bullet, a
-// bulleted top-level item, or an ordered-list item (`1.`/`1)`). Groups: 1 =
-// leading indent, 2 = optional list marker (with its trailing space), 3 =
-// the URL, 4 = trailing whitespace, \r included so a CRLF board doesn't
+// board convention for links (see README.md's rendering-style section:
+// "Bare URLs ... render as real OSC 8 hyperlinks") — whether it's an
+// indented continuation line under a bullet, a bulleted top-level item, or
+// an ordered-list item (`1.`/`1)`). Groups: 1 = leading indent, 2 =
+// optional list marker (with its trailing space), 3 = the URL, 4 = trailing
+// whitespace, \r included so a CRLF board doesn't
 // silently skip the fix.
 var bareURLLine = regexp.MustCompile(`^([ \t]*)((?:(?:[-*+]|\d+[.)])\s+)?)(https?://\S+)([ \t\r]*)$`)
 
@@ -192,6 +193,13 @@ func stashBareURLs(raw string) (string, []string) {
 		// the preceding blank line is what tells it apart from a nested
 		// list's lazy continuation line, which reaches the same 4-space
 		// depth (glamour's LevelIndent is 2/level) but isn't code.
+		//
+		// Known boundary, not a bug: a *loose* list's second paragraph
+		// (blank line, then a 4-space-indented URL under a bullet) looks
+		// identical to this guard and falls through to the old wrap-split.
+		// Distinguishing it needs real list-context tracking; the board
+		// convention doesn't produce loose lists, so this hasn't been
+		// worth the complexity.
 		if marker == "" && (strings.Contains(indent, "\t") || len(indent) >= 4) && wasPrevBlank {
 			continue
 		}
@@ -233,6 +241,28 @@ func hyperlink(target, display string) string {
 	return oscOpen + oscTarget(target) + oscBEL + display + oscClose
 }
 
+// stripControlBytes removes ASCII control bytes and DEL from s. The stashed
+// URL is never seen by glamour (it's replaced with a placeholder before
+// rendering), so nothing else in the pipeline neutralizes an embedded ESC
+// or BEL before it becomes on-screen display text — xansi.Truncate passes
+// escapes through unconditionally (that's the whole premise this PR relies
+// on for the hyperlink itself to survive truncation) and termenv only
+// styles text, it doesn't sanitize it. oscTarget percent-encodes the same
+// bytes for the link target, where they need to stay meaningful; the
+// visible text just needs them gone, since a board line is written by an
+// agent pasting arbitrary tool output and an ESC there would otherwise
+// reach the terminal as a real escape sequence — a nested OSC 8 pointing
+// somewhere the board never named, or worse.
+func stripControlBytes(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c >= 0x20 && c != 0x7f {
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
 // restoreBareURLs swaps each placeholder back for its real URL, wrapped in
 // an OSC 8 hyperlink and styled like glamour's own Link (colorLink,
 // underlined). The visible text is elided to fit whatever width remains on
@@ -272,7 +302,7 @@ func restoreBareURLs(rendered string, urls []string, width int) string {
 			// enforce the pane-width invariant. Measuring the budget with
 			// one metric and building the display text with a different
 			// one is exactly how that invariant would quietly break again.
-			display := xansi.Truncate(url, budget, "…")
+			display := xansi.Truncate(stripControlBytes(url), budget, "…")
 			styled := termenv.String(display).Foreground(termenv.TrueColor.Color(colorLink)).Underline().String()
 			lines[li] = prefix + hyperlink(url, styled) + rest
 			break
@@ -322,8 +352,13 @@ func renderMarkdown(raw string, width int, linkify bool) (string, error) {
 		// (an unanticipated reflow edge case), strip the residual bytes
 		// rather than let a raw \x1f-delimited token land on screen — the
 		// URL is lost either way at that point; better an invisible
-		// failure than a garbled one.
+		// failure than a garbled one. The plain \x1f pass after it is the
+		// same safety net for the case the placeholder itself got split
+		// across a wrap: the paired-delimiter regex above can't match half
+		// a token, but a lone \x1f is unambiguously our own byte (nothing
+		// else in this pipeline emits it) and safe to drop on sight.
 		out = residualPlaceholder.ReplaceAllString(out, "")
+		out = strings.ReplaceAll(out, "\x1f", "")
 	}
 	return tidy(out), nil
 }

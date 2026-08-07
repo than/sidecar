@@ -207,7 +207,12 @@ func TestBareURLInFenceUntouched(t *testing.T) {
 }
 
 // A control byte or non-ASCII byte in a URL must not break out of the OSC 8
-// escape (injection) or get silently dropped (lossy percent-encoding).
+// escape (injection) or get silently dropped (lossy percent-encoding) \u2014 in
+// EITHER half of the hyperlink. The target (m[1]) percent-encodes so the
+// link stays meaningful; the display text (m[2]) just needs the control
+// bytes gone outright, since a raw ESC/BEL there reaches the terminal as a
+// live escape sequence (glamour never sees the stashed URL to neutralize
+// it, and neither xansi.Truncate nor termenv sanitize).
 func TestBareURLUnsafeBytesEncoded(t *testing.T) {
 	raw := "- https://example.test/caf\u00e9-and-a-bell-\x07-in-the-middle\n"
 	out, err := renderMarkdown(raw, 40, true)
@@ -223,6 +228,35 @@ func TestBareURLUnsafeBytesEncoded(t *testing.T) {
 	}
 	if !strings.Contains(m[1], "%C3%A9") || !strings.Contains(m[1], "%07") {
 		t.Errorf("target wasn't percent-encoded correctly: %q", m[1])
+	}
+	// The display text legitimately carries our own SGR styling (teal,
+	// underline), which is itself ESC bytes \u2014 strip that (SGR-only; OSC 8
+	// isn't SGR and survives) before checking for anything else.
+	if plain := stripANSI(m[2]); strings.ContainsAny(plain, "\x07\x1b\x00") {
+		t.Fatalf("display text still contains a raw control byte \u2014 escape injection: %q", plain)
+	}
+}
+
+// An ESC byte in a URL must not let a pasted-in escape sequence \u2014 most
+// pointedly a second, attacker-controlled OSC 8 open \u2014 reach the terminal
+// inside the display text. Board files are agent-written from pasted tool
+// output, so this isn't hypothetical.
+func TestBareURLDisplayTextNoEscapeInjection(t *testing.T) {
+	raw := "- https://example.test/x\x1b]8;;https://evil.test\x07pwned\n"
+	out, err := renderMarkdown(raw, 60, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := oscLinkRE.FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no hyperlink found:\n%s", stripANSI(out))
+	}
+	plain := stripANSI(m[2]) // strip our own legitimate SGR styling first
+	if strings.Contains(plain, "\x1b]8;;") {
+		t.Fatalf("display text carries an injected OSC 8 open: %q", plain)
+	}
+	if strings.Contains(plain, "\x1b") {
+		t.Fatalf("display text contains a raw ESC byte: %q", plain)
 	}
 }
 
