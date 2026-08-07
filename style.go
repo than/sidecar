@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/glamour"
@@ -187,21 +188,17 @@ func stashBareURLs(raw string) (string, []string) {
 		blank := strings.TrimSpace(line) == ""
 		prevBlank = blank
 
-		if m := fenceLine.FindStringSubmatch(line); m != nil {
-			c, n := m[1][0], len(m[1])
-			switch {
-			case fenceChar == 0:
-				fenceChar, fenceLen = c, n
-			case c == fenceChar && n >= fenceLen:
-				// Per CommonMark, a fence only closes on a run of the same
-				// character at least as long as the one that opened it —
-				// a shorter or different-character run (e.g. a "~~~" line
-				// inside a "~~~~"-opened block) is just content.
-				fenceChar, fenceLen = 0, 0
-			}
-			continue
-		}
 		if fenceChar != 0 {
+			// Already inside a fence: only a run of the same character,
+			// at least as long as the one that opened it, closes it —
+			// anything else (including a run of the other fence
+			// character) is just content.
+			if m := fenceLine.FindStringSubmatch(line); m != nil {
+				c, n := m[1][0], len(m[1])
+				if c == fenceChar && n >= fenceLen {
+					fenceChar, fenceLen = 0, 0
+				}
+			}
 			continue
 		}
 
@@ -215,16 +212,27 @@ func stashBareURLs(raw string) (string, []string) {
 		// block doesn't fall through the guard the first URL was caught by.
 		indent := leadingIndent(line)
 		indented := hasCodeIndent(indent)
-		switch {
-		case inIndentedCode:
-			if !blank && !indented {
-				inIndentedCode = false
-			}
-		case wasPrevBlank && !blank && indented && !listMarkerPrefix.MatchString(line):
-			inIndentedCode = true
-		}
 		if inIndentedCode {
-			continue
+			if blank || indented {
+				continue
+			}
+			inIndentedCode = false
+		} else {
+			// A fence delimiter only opens a fence outside an indented
+			// code block — a ``` or ~~~ line that's itself part of one is
+			// just indented content, same as any other line in it, so
+			// this check has to come after the indented-code state above
+			// or an indented fence-looking line would open a fence that
+			// never finds its close and silently reverts every bare URL
+			// for the rest of the document.
+			if m := fenceLine.FindStringSubmatch(line); m != nil {
+				fenceChar, fenceLen = m[1][0], len(m[1])
+				continue
+			}
+			if wasPrevBlank && !blank && indented && !listMarkerPrefix.MatchString(line) {
+				inIndentedCode = true
+				continue
+			}
 		}
 
 		m := bareURLLine.FindStringSubmatch(line)
@@ -238,7 +246,11 @@ func stashBareURLs(raw string) (string, []string) {
 		// the board convention doesn't produce loose lists, so this hasn't
 		// been worth the complexity.
 		urls = append(urls, m[3])
-		lines[i] = m[1] + m[2] + urlPlaceholder(len(urls)-1) + m[4]
+		// m[4] (trailing whitespace) is dropped, not reinserted: tidy()
+		// strips it from the final output anyway, and keeping it here
+		// would shrink restoreBareURLs' elision budget for spaces nobody
+		// sees.
+		lines[i] = m[1] + m[2] + urlPlaceholder(len(urls)-1)
 	}
 	return strings.Join(lines, "\n"), urls
 }
@@ -297,60 +309,101 @@ func stripControlBytes(s string) string {
 	return b.String()
 }
 
+// placeholderFind locates every placeholder on a line at once, capturing
+// its index — used by restoreBareURLs to size the shared budget when more
+// than one bare URL reflowed onto the same physical line.
+var placeholderFind = regexp.MustCompile(`\x1fU(\d+)\x1f`)
+
 // restoreBareURLs swaps each placeholder back for its real URL, wrapped in
 // an OSC 8 hyperlink and styled like glamour's own Link (colorLink,
-// underlined). The visible text is elided to fit whatever width remains on
-// its line — measured from the actual rendered prefix and suffix (bullet,
-// indent, nesting, and anything glamour reflowed onto the same physical
-// line after the URL, e.g. a soft-wrapped paragraph continuation), not
-// guessed — but the hyperlink target always carries the full, untruncated
-// URL, so the link opens the right place regardless of how much of it is
-// shown. Each URL has its own index-keyed placeholder, so two URLs that
-// happen to elide to identical visible text can never cross-link — there's
-// nothing to search for and collide on. If there's no room at all (a
-// pathologically narrow pane with a deep indent), the URL is dropped
-// rather than drawn — an over-width line would break the one invariant
-// every other line in this renderer holds.
+// underlined). The unit of work is the rendered LINE, not the individual
+// URL: every placeholder on a line shares one width budget, computed once
+// from the line with all placeholders removed and then split evenly across
+// however many there are. Processing URLs independently (each measuring
+// its budget against a line that already had earlier URLs' full-size
+// hyperlinks substituted in) let the first URL on a shared line claim
+// nearly the whole width and starve the rest down to a cell or two — width
+// invariant intact, but a real bug: two bare URLs as consecutive
+// continuation lines of one board item reflow onto a single physical line
+// exactly like this. The hyperlink target always carries the full,
+// untruncated URL regardless of what its display text elides to. Each URL
+// has its own index-keyed placeholder, so two URLs that happen to elide to
+// identical visible text can never cross-link — there's nothing to search
+// for and collide on. If a URL's share of the line's budget is under 1
+// cell, it's dropped rather than drawn — an over-width line would break
+// the one invariant every other line in this renderer holds.
 func restoreBareURLs(rendered string, urls []string, width int) string {
 	if len(urls) == 0 {
 		return rendered
 	}
 	lines := strings.Split(rendered, "\n")
 	lr, lg, lb := hexToRGB(colorLink) // loop-invariant
-	for i, url := range urls {
-		ph := urlPlaceholder(i)
-		for li, line := range lines {
-			idx := strings.Index(line, ph)
-			if idx < 0 {
-				continue
-			}
-			prefix := line[:idx]
-			rest := line[idx+len(ph):]
-			budget := width - visibleWidth(prefix) - visibleWidth(rest)
-			if budget < 1 {
-				lines[li] = prefix + rest
-				break
-			}
-			// xansi.Truncate, not go-runewidth: it's grapheme-cluster aware
-			// (a VS16 emoji presentation sequence is one cluster but two
-			// runes) and it's the same measurement visibleWidth uses to
-			// enforce the pane-width invariant. Measuring the budget with
-			// one metric and building the display text with a different
-			// one is exactly how that invariant would quietly break again.
-			display := xansi.Truncate(stripControlBytes(url), budget, "…")
-			// Raw ANSI, not termenv.String: termenv.String binds to
-			// termenv's auto-detected package-global Output profile, which
-			// this codebase deliberately overrides everywhere else — the
-			// glamour renderer is forced to termenv.TrueColor below, and
-			// diff.go writes 38;2;r;g;b by hand for the same reason
-			// ("piped/degraded profiles were how glow washed out"). Under
-			// a degraded profile termenv.String would silently drop the
-			// styling and this would be the one link on screen that isn't
-			// truecolor.
-			styled := fmt.Sprintf("\x1b[4;38;2;%d;%d;%dm%s\x1b[0m", lr, lg, lb, display)
-			lines[li] = prefix + hyperlink(url, styled) + rest
-			break
+	for li, line := range lines {
+		matches := placeholderFind.FindAllStringSubmatchIndex(line, -1)
+		if matches == nil {
+			continue
 		}
+
+		// glamour's MarginWriter pads every short block line with
+		// trailing spaces out to the full block width (see styleConfig's
+		// doc comment). Real trailing content — what the "keep trailing
+		// content" fix this comment replaces was protecting — only ever
+		// needs the width AFTER that padding, never the padding itself.
+		// Left uncorrected, the padding reads as content already filling
+		// the line and starves the elision budget to almost nothing on
+		// every hyperlinked line, regardless of how much real room there
+		// actually is — this was silent since every existing test checks
+		// the hyperlink target and the width invariant, neither of which
+		// notices a `budget` this small; the display text is still
+		// technically "intact" and "within width", just useless. Strip
+		// the padding by measuring the plain-text line with real
+		// trailing spaces trimmed, then cutting the ANSI-styled line to
+		// that same visible width — x/ansi.Truncate is escape-aware, so
+		// this keeps every SGR code and every placeholder intact and
+		// only drops the trailing filler.
+		realWidth := visibleWidth(strings.TrimRight(stripANSI(line), " "))
+		line = xansi.Truncate(line, realWidth, "")
+		matches = placeholderFind.FindAllStringSubmatchIndex(line, -1)
+		if matches == nil {
+			continue // placeholders are never whitespace; stay safe anyway
+		}
+
+		available := width - visibleWidth(placeholderFind.ReplaceAllString(line, ""))
+		share := available / len(matches)
+
+		var out strings.Builder
+		cursor := 0
+		for _, m := range matches {
+			start, end := m[0], m[1]
+			out.WriteString(line[cursor:start])
+			cursor = end
+			idx, err := strconv.Atoi(line[m[2]:m[3]])
+			if err != nil || idx < 0 || idx >= len(urls) || share < 1 {
+				continue // drop this URL: no room, or a malformed index
+			}
+			url := urls[idx]
+			// xansi.Truncate, not go-runewidth: it's grapheme-cluster
+			// aware (a VS16 emoji presentation sequence is one cluster
+			// but two runes) and it's the same measurement visibleWidth
+			// uses to enforce the pane-width invariant. Measuring the
+			// budget with one metric and building the display text with
+			// a different one is exactly how that invariant would
+			// quietly break again.
+			display := xansi.Truncate(stripControlBytes(url), share, "…")
+			// Raw ANSI, not termenv.String: termenv.String binds to
+			// termenv's auto-detected package-global Output profile,
+			// which this codebase deliberately overrides everywhere else
+			// — the glamour renderer is forced to termenv.TrueColor
+			// below, and diff.go writes 38;2;r;g;b by hand for the same
+			// reason ("piped/degraded profiles were how glow washed
+			// out"). Under a degraded profile termenv.String would
+			// silently drop the styling and this would be the one link
+			// on screen that isn't truecolor.
+			styled := fmt.Sprintf("\x1b[4;38;2;%d;%d;%dm%s\x1b[0m", lr, lg, lb, display)
+			out.WriteString(hyperlink(url, styled))
+		}
+		out.WriteString(line[cursor:])
+		lines[li] = out.String()
 	}
 	return strings.Join(lines, "\n")
 }

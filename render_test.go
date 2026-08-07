@@ -114,6 +114,19 @@ func TestBareURLIntact(t *testing.T) {
 				if n := strings.Count(line, "\x1b]8;;"+url+"\x07"); n > 1 {
 					t.Errorf("target %s duplicated on line: %q", url, line)
 				}
+				// The display text should use most of the available
+				// width, not just technically "fit" — a single bare URL
+				// alone on its own line, at a width comfortably close to
+				// its own length, has no reason to elide down to almost
+				// nothing. Root-cause regression guard: the elision
+				// budget briefly measured glamour's own trailing
+				// pad-to-width filler as if it were real content, which
+				// starved every hyperlinked line's display text down to a
+				// cell or two while still passing every other check here
+				// (target intact, one line, width never exceeded).
+				if w := visibleWidth(m[2]); w < 20 {
+					t.Errorf("display text for %s suspiciously narrow (%d cells) given ~38 available: %q", url, w, stripANSI(m[2]))
+				}
 			}
 		}
 		if !found {
@@ -185,6 +198,46 @@ func TestBareURLCollisionSafe(t *testing.T) {
 	}
 	if links[1][1] != "https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2" {
 		t.Errorf("second link target wrong: %q", links[1][1])
+	}
+}
+
+// Two bare URLs as consecutive continuation lines of one paragraph reflow
+// onto a single physical rendered line — the same reflow
+// TestBareURLKeepsTrailingContent already relies on, just with a second
+// placeholder instead of trailing prose. Both must keep a usable display
+// width sharing that line's budget, not have the first URL claim nearly
+// all of it and starve the second down to a cell or two. Round-8 review's
+// confirmed bug, though the actual root cause it surfaced was bigger: the
+// budget calculation was measuring glamour's own trailing pad-to-width
+// filler as if it were content, starving the elision budget on almost
+// every hyperlinked line regardless of whether it shared its line with
+// anything.
+func TestBareURLsSharingLineSplitBudgetFairly(t *testing.T) {
+	raw := "See docs:\nhttps://a.example.test/some/long/path\nhttps://b.example.test/some/long/path\n"
+	out, err := renderMarkdown(raw, 40, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	links := oscLinkRE.FindAllStringSubmatch(out, -1)
+	if len(links) != 2 {
+		t.Fatalf("want 2 hyperlinks, got %d:\n%s", len(links), stripANSI(out))
+	}
+	const wantTarget0 = "https://a.example.test/some/long/path"
+	const wantTarget1 = "https://b.example.test/some/long/path"
+	if links[0][1] != wantTarget0 {
+		t.Errorf("first target wrong: %q", links[0][1])
+	}
+	if links[1][1] != wantTarget1 {
+		t.Errorf("second target wrong: %q", links[1][1])
+	}
+	// A "usable" floor, not a precise one: enough to recognize the domain,
+	// not just "h…". The old, per-URL-not-per-line budget calculation
+	// gave the second URL 1-2 cells here.
+	const minUsableDisplay = 8
+	for i, m := range links {
+		if w := visibleWidth(m[2]); w < minUsableDisplay {
+			t.Errorf("link %d display text too narrow to be usable: %d cells (%q)", i, w, stripANSI(m[2]))
+		}
 	}
 }
 
