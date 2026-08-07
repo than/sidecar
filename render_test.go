@@ -180,8 +180,9 @@ func TestBareURLOrderedListMarker(t *testing.T) {
 }
 
 // Two bare URLs that elide to identical visible text must still each get
-// their own correct hyperlink target — no cross-linking (PR #18's confirmed
-// collision bug: a global text search re-found the first occurrence).
+// their own correct hyperlink target — no cross-linking. (A global text
+// search that re-finds the first occurrence is the failure mode this
+// guards against; index-keyed placeholders avoid it structurally.)
 func TestBareURLCollisionSafe(t *testing.T) {
 	raw := "- https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1\n" +
 		"- https://example.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2\n"
@@ -201,17 +202,29 @@ func TestBareURLCollisionSafe(t *testing.T) {
 	}
 }
 
+// A board line that already contains \x1f (a pasted-tool-output edge case)
+// must not prefix-match a real placeholder and substitute the wrong URL.
+func TestBareURLSourceControlCharNeutralized(t *testing.T) {
+	raw := "- weird\x1fbytes here, not a url\n- https://example.test/the-real-target-url\n"
+	out, err := renderMarkdown(raw, 40, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "\x1f") {
+		t.Errorf("raw \\x1f from the source survived into output: %q", out)
+	}
+	links := oscLinkRE.FindAllStringSubmatch(out, -1)
+	if len(links) != 1 || links[0][1] != "https://example.test/the-real-target-url" {
+		t.Errorf("wrong or missing link, want exactly the real URL: %v", links)
+	}
+}
+
 // Two bare URLs as consecutive continuation lines of one paragraph reflow
 // onto a single physical rendered line — the same reflow
 // TestBareURLKeepsTrailingContent already relies on, just with a second
 // placeholder instead of trailing prose. Both must keep a usable display
 // width sharing that line's budget, not have the first URL claim nearly
-// all of it and starve the second down to a cell or two. Round-8 review's
-// confirmed bug, though the actual root cause it surfaced was bigger: the
-// budget calculation was measuring glamour's own trailing pad-to-width
-// filler as if it were content, starving the elision budget on almost
-// every hyperlinked line regardless of whether it shared its line with
-// anything.
+// all of it and starve the second down to a cell or two.
 func TestBareURLsSharingLineSplitBudgetFairly(t *testing.T) {
 	raw := "See docs:\nhttps://a.example.test/some/long/path\nhttps://b.example.test/some/long/path\n"
 	out, err := renderMarkdown(raw, 40, true)
@@ -315,9 +328,8 @@ func TestBareURLDisplayTextNoEscapeInjection(t *testing.T) {
 }
 
 // A nested list item's budget must account for its actual indent, not a
-// guessed constant (PR #18's confirmed bug: a hard-coded top-level-bullet
-// reserve overshot on nested items and re-broke the line it was meant to
-// fix).
+// guessed constant — a hard-coded top-level-bullet reserve would overshoot
+// on nested items and re-break the line it's meant to fix.
 func TestBareURLNestedIndentBudget(t *testing.T) {
 	raw := "- Parent\n  - https://example.test/nested-item-url-thats-long-enough-to-need-eliding\n"
 	out, err := renderMarkdown(raw, 30, true)
@@ -370,12 +382,12 @@ func TestChangedLinesSeesURLTargetChange(t *testing.T) {
 	}
 }
 
-// The gate PR #18 could never verify: bubbletea's renderer and lipgloss's
-// MaxWidth both truncate the final frame to the pane width using
-// charmbracelet/x/ansi, which understands OSC 8 and only cuts visible
-// cells. If that ever regresses to an OSC-blind truncator, a hyperlinked
-// line gets cut inside the escape and the display text (which comes after
-// it) is dropped outright — this pins the assumption directly.
+// The load-bearing assumption behind this whole approach: bubbletea's
+// renderer and lipgloss's MaxWidth both truncate the final frame to the
+// pane width using charmbracelet/x/ansi, which understands OSC 8 and only
+// cuts visible cells. If that ever regresses to an OSC-blind truncator, a
+// hyperlinked line gets cut inside the escape and the display text (which
+// comes after it) is dropped outright — this pins the assumption directly.
 func TestHyperlinkSurvivesDownstreamTruncation(t *testing.T) {
 	target := "https://example.test/downstream-truncation-gate"
 	line := "prefix " + hyperlink(target, "short")
@@ -466,10 +478,10 @@ func TestBareURLInIndentedCodeBlockUntouched(t *testing.T) {
 
 // An indented code block is a block, not a per-line property: a second URL
 // deeper in the same block (whose own immediate predecessor isn't blank)
-// must be protected exactly like the first one, whose predecessor is.
-// Round-7 review's confirmed bug: a per-line wasPrevBlank check caught the
-// first URL and missed the second, so two URLs in the same verbatim block
-// rendered differently from each other.
+// must be protected exactly like the first one, whose predecessor is. A
+// per-line wasPrevBlank check alone catches the first URL and misses the
+// second, so two URLs in the same verbatim block would render differently
+// from each other.
 func TestBareURLIndentedCodeBlockMultiLine(t *testing.T) {
 	raw := "Run these:\n\n    https://example.test/first-verbatim-command\n    https://example.test/second-verbatim-command\n"
 	out, err := renderMarkdown(raw, 40, true)
@@ -485,13 +497,12 @@ func TestBareURLIndentedCodeBlockMultiLine(t *testing.T) {
 }
 
 // The line that CLOSES an indented code block must still be checked as a
-// possible fence opener itself. Round-9 review's confirmed bug: the fence
-// check lived in an else-branch the closing line skipped entirely, so a
-// fence right after an indented block never opened, the URL inside it got
-// hyperlinked (exactly what fence protection exists to prevent), and the
-// line meant to CLOSE that fence opened a phantom one instead — silently
-// disabling the whole fix for every real bare URL for the rest of the
-// document.
+// possible fence opener itself — an else-branch skip there would let a
+// fence right after an indented block never open, hyperlinking the URL
+// inside it (exactly what fence protection exists to prevent) and, worse,
+// leave the line meant to CLOSE that fence opening a phantom one instead —
+// silently disabling the whole fix for every real bare URL for the rest of
+// the document.
 func TestBareURLFenceAfterIndentedCodeBlock(t *testing.T) {
 	raw := "intro\n\n    indented code\n\n```\nhttps://example.test/long-url-inside-a-fence-after-code\n```\n\n" +
 		"- https://example.test/real-url-after-the-fence-must-still-be-fixed\n"

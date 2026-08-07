@@ -177,6 +177,12 @@ func hasCodeIndent(indent string) bool {
 // such lines out of that path entirely. restoreBareURLs puts the real,
 // styled, hyperlinked URL back after rendering.
 func stashBareURLs(raw string) (string, []string) {
+	// A board line already containing \x1f — a pasted-tool-output edge
+	// case, the same threat model stripControlBytes exists for — would
+	// otherwise prefix-match a real placeholder in restoreBareURLs' search
+	// and substitute the wrong URL. \x1f has no legitimate use in board
+	// text, so it's always safe to drop from the input outright.
+	raw = strings.ReplaceAll(raw, "\x1f", "")
 	lines := strings.Split(raw, "\n")
 	var urls []string
 	var fenceChar byte
@@ -359,21 +365,19 @@ func restoreBareURLs(rendered string, urls []string, width int) string {
 
 		// glamour's MarginWriter pads every short block line with
 		// trailing spaces out to the full block width (see styleConfig's
-		// doc comment). Real trailing content — what the "keep trailing
-		// content" fix this comment replaces was protecting — only ever
-		// needs the width AFTER that padding, never the padding itself.
-		// Left uncorrected, the padding reads as content already filling
-		// the line and starves the elision budget to almost nothing on
-		// every hyperlinked line, regardless of how much real room there
-		// actually is — this was silent since every existing test checks
-		// the hyperlink target and the width invariant, neither of which
-		// notices a `budget` this small; the display text is still
-		// technically "intact" and "within width", just useless. Strip
-		// the padding by measuring the plain-text line with real
-		// trailing spaces trimmed, then cutting the ANSI-styled line to
-		// that same visible width — x/ansi.Truncate is escape-aware, so
-		// this keeps every SGR code and every placeholder intact and
-		// only drops the trailing filler.
+		// doc comment). Real trailing content on the line only ever needs
+		// the width AFTER that padding, never the padding itself — left
+		// uncorrected, the padding reads as content already filling the
+		// line and starves the elision budget to almost nothing,
+		// regardless of how much real room there actually is. The
+		// hyperlink target and the width invariant both stay technically
+		// correct at any budget, including a useless one, so this needs
+		// its own check rather than relying on those. Strip the padding
+		// by measuring the plain-text line with real trailing spaces
+		// trimmed, then cutting the ANSI-styled line to that same visible
+		// width — x/ansi.Truncate is escape-aware, so this keeps every
+		// SGR code and every placeholder intact and only drops the
+		// trailing filler.
 		realWidth := visibleWidth(strings.TrimRight(stripANSI(line), " "))
 		line = xansi.Truncate(line, realWidth, "")
 		matches = placeholderFind.FindAllStringSubmatchIndex(line, -1)
