@@ -97,7 +97,14 @@ func main() {
 
 // runStatic renders the file once to stdout and exits — no watching, no
 // alt-screen. Handy for piping, CI, and quick inline checks. Width is the
-// terminal width (minus 2) when stdout is a TTY, else 80.
+// terminal width (minus 2) when stdout is a TTY, else 80. Bare-URL OSC 8
+// hyperlinking (and the display-text elision that comes with it) is skipped
+// whenever stdout isn't a TTY: whatever's on the other end of the pipe —
+// grep, an editor, a CI log — can't render the escape sequence anyway. A
+// URL short enough to fit the fallback width comes through plain and
+// intact; one long enough to still need wrapping hits glamour's original
+// hard break instead (see renderMarkdown's linkify doc comment) — out of
+// scope for this fix, just not silently hidden behind an OSC 8 escape.
 func runStatic(args []string) int {
 	path := defaultBoardPath()
 	if len(args) > 0 {
@@ -113,11 +120,12 @@ func runStatic(args []string) int {
 		fmt.Fprintln(os.Stderr, "sidecar:", err)
 		return 1
 	}
+	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
 	width := 80
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
 		width = w
 	}
-	out, err := renderMarkdown(string(data), width-2)
+	out, err := renderMarkdown(string(data), width-2, isTTY)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar:", err)
 		return 1

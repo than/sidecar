@@ -283,7 +283,7 @@ func (m *model) reload(force bool) (changed bool) {
 		displayRaw = applyCollapse(raw, board, m.collapsed)
 	}
 
-	rendered, err := renderMarkdown(displayRaw, m.renderWidth())
+	rendered, err := renderMarkdown(displayRaw, m.renderWidth(), true)
 	if err != nil {
 		m.loadErr = err
 		m.vp.SetContent(fmt.Sprintf("\n  Render error: %v", err))
@@ -307,7 +307,7 @@ func (m *model) reload(force bool) (changed bool) {
 		if baseBoard, ok := parseBoard(m.prevBaseline); ok {
 			baseDisplay = applyCollapse(m.prevBaseline, baseBoard, m.collapsed)
 		}
-		if base, berr := renderMarkdown(baseDisplay, m.renderWidth()); berr == nil {
+		if base, berr := renderMarkdown(baseDisplay, m.renderWidth(), true); berr == nil {
 			changedMap = changedLines(strings.Split(base, "\n"), lines)
 		}
 	}
@@ -351,7 +351,7 @@ func (m *model) rerenderCollapse() {
 		return
 	}
 	displayRaw := applyCollapse(m.raw, m.board, m.collapsed)
-	rendered, err := renderMarkdown(displayRaw, m.renderWidth())
+	rendered, err := renderMarkdown(displayRaw, m.renderWidth(), true)
 	if err != nil {
 		return // m.raw already rendered fine on the last successful reload
 	}
