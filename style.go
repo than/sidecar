@@ -217,22 +217,35 @@ func stashBareURLs(raw string) (string, []string) {
 				continue
 			}
 			inIndentedCode = false
-		} else {
-			// A fence delimiter only opens a fence outside an indented
-			// code block — a ``` or ~~~ line that's itself part of one is
-			// just indented content, same as any other line in it, so
-			// this check has to come after the indented-code state above
-			// or an indented fence-looking line would open a fence that
-			// never finds its close and silently reverts every bare URL
-			// for the rest of the document.
-			if m := fenceLine.FindStringSubmatch(line); m != nil {
-				fenceChar, fenceLen = m[1][0], len(m[1])
-				continue
-			}
-			if wasPrevBlank && !blank && indented && !listMarkerPrefix.MatchString(line) {
-				inIndentedCode = true
-				continue
-			}
+			// Falls through to the fence/open checks below rather than
+			// an else-branch skip: the line that closes an indented code
+			// block (non-blank, non-indented — the case that just fell
+			// through above) still needs to be checked as a possible
+			// fence opener itself. Missing that let a ``` line closing
+			// an indented block skip fence-recognition entirely, so the
+			// fence it should have opened never did, the bare URL right
+			// after it went unprotected, and the *next* fence-looking
+			// line (meant to close that fence) opened a phantom one
+			// instead — silently reverting every real bare URL for the
+			// rest of the document. `indented` is false here by
+			// construction (that's what let this branch fall through at
+			// all), so the indented-code-open check below cannot misfire
+			// on this same line.
+		}
+		// A fence delimiter only opens a fence outside an indented code
+		// block — a ``` or ~~~ line that's itself part of one is just
+		// indented content, same as any other line in it, so this check
+		// has to come after the indented-code state above or an indented
+		// fence-looking line would open a fence that never finds its
+		// close and silently reverts every bare URL for the rest of the
+		// document.
+		if m := fenceLine.FindStringSubmatch(line); m != nil {
+			fenceChar, fenceLen = m[1][0], len(m[1])
+			continue
+		}
+		if wasPrevBlank && !blank && indented && !listMarkerPrefix.MatchString(line) {
+			inIndentedCode = true
+			continue
 		}
 
 		m := bareURLLine.FindStringSubmatch(line)
@@ -416,11 +429,13 @@ func restoreBareURLs(rendered string, urls []string, width int) string {
 // linkify controls the bare-URL OSC 8 hyperlink path: true for the
 // interactive TUI, where the escape sequence is invisible to the terminal
 // and only the (possibly elided) display text is shown. false skips
-// stashBareURLs entirely, so bare URLs render as plain, complete,
-// un-elided text — for a non-TTY consumer (runStatic piped to a file,
-// grep, a CI log) whose stdout is not a terminal that would render the
-// hyperlink at all; there, showing the full plain URL beats hiding it
-// behind an escape sequence that reader can't see.
+// stashBareURLs entirely — for a non-TTY consumer (runStatic piped to a
+// file, grep, a CI log) whose stdout is not a terminal that would render
+// the hyperlink at all, an OSC 8 escape it can't see is worse than plain
+// text. It isn't a full guarantee, though: a URL long enough to still hit
+// glamour's own hard word-wrap on that path renders un-elided but still
+// split mid-URL, same as before this fix — this only helps the common
+// case, a URL short enough to need no wrap at the non-TTY fallback width.
 func renderMarkdown(raw string, width int, linkify bool) (string, error) {
 	if width < 10 {
 		width = 10

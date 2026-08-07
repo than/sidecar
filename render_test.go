@@ -484,6 +484,38 @@ func TestBareURLIndentedCodeBlockMultiLine(t *testing.T) {
 	}
 }
 
+// The line that CLOSES an indented code block must still be checked as a
+// possible fence opener itself. Round-9 review's confirmed bug: the fence
+// check lived in an else-branch the closing line skipped entirely, so a
+// fence right after an indented block never opened, the URL inside it got
+// hyperlinked (exactly what fence protection exists to prevent), and the
+// line meant to CLOSE that fence opened a phantom one instead — silently
+// disabling the whole fix for every real bare URL for the rest of the
+// document.
+func TestBareURLFenceAfterIndentedCodeBlock(t *testing.T) {
+	raw := "intro\n\n    indented code\n\n```\nhttps://example.test/long-url-inside-a-fence-after-code\n```\n\n" +
+		"- https://example.test/real-url-after-the-fence-must-still-be-fixed\n"
+	out, err := renderMarkdown(raw, 40, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	links := oscLinkRE.FindAllStringSubmatch(out, -1)
+	for _, m := range links {
+		if m[1] == "https://example.test/long-url-inside-a-fence-after-code" {
+			t.Errorf("URL inside the fence got hyperlinked — fence never opened:\n%s", stripANSI(out))
+		}
+	}
+	found := false
+	for _, m := range links {
+		if m[1] == "https://example.test/real-url-after-the-fence-must-still-be-fixed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("real bare URL after the fence wasn't hyperlinked — phantom fence never closed:\n%s", stripANSI(out))
+	}
+}
+
 // Emoji section markers are double-width; wrapping must account for that.
 func TestEmojiHeadingWidth(t *testing.T) {
 	out, err := renderMarkdown("## 🔴 Needs action right now with a long heading tail end", 40, true)

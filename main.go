@@ -100,8 +100,11 @@ func main() {
 // terminal width (minus 2) when stdout is a TTY, else 80. Bare-URL OSC 8
 // hyperlinking (and the display-text elision that comes with it) is skipped
 // whenever stdout isn't a TTY: whatever's on the other end of the pipe —
-// grep, an editor, a CI log — can't render the escape sequence anyway, so a
-// full, plain, un-elided URL serves it better than a shortened one.
+// grep, an editor, a CI log — can't render the escape sequence anyway. A
+// URL short enough to fit the fallback width comes through plain and
+// intact; one long enough to still need wrapping hits glamour's original
+// hard break instead (see renderMarkdown's linkify doc comment) — out of
+// scope for this fix, just not silently hidden behind an OSC 8 escape.
 func runStatic(args []string) int {
 	path := defaultBoardPath()
 	if len(args) > 0 {
