@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/glamour"
@@ -117,6 +119,61 @@ func styleConfig() ansi.StyleConfig {
 	}
 }
 
+// bareURLLine matches a markdown line that is nothing but a bare URL — the
+// board convention for links (see CLAUDE.md: "bare URLs, each on its own
+// line") — whether it's an indented continuation line under a bullet or a
+// top-level list item in its own right.
+var bareURLLine = regexp.MustCompile(`(?m)^([ \t]*(?:[-*+]\s+)?)(https?://\S+)([ \t]*)$`)
+
+// urlPlaceholder is a short, markdown-inert stand-in for a stashed URL. It
+// uses the ASCII unit separator as a delimiter so it can never collide with
+// real board text, and stays well under any realistic wrap width.
+func urlPlaceholder(i int) string {
+	return fmt.Sprintf("\x1fsidecarurl%d\x1f", i)
+}
+
+// stashBareURLs replaces every bare-URL-only line with a short placeholder,
+// returning the stashed URLs in order. Glamour's word-wrap hard-splits a
+// long link token mid-URL once it exceeds the wrap width (it treats the
+// autolink's rendered ANSI run differently from plain text and force-breaks
+// it instead of pushing the whole word to the next line) — the placeholder
+// keeps such lines out of that path entirely. restoreBareURLs puts the real,
+// styled URL back after rendering.
+func stashBareURLs(raw string) (string, []string) {
+	var urls []string
+	out := bareURLLine.ReplaceAllStringFunc(raw, func(line string) string {
+		m := bareURLLine.FindStringSubmatch(line)
+		urls = append(urls, m[2])
+		return m[1] + urlPlaceholder(len(urls)-1)
+	})
+	return out, urls
+}
+
+// restoreBareURLs swaps each placeholder back for its real URL, styled the
+// same as glamour would style a Link (colorLink, underlined) — so a
+// bare-URL-only line always survives on one physical line, clickable, no
+// matter how far it overflows the pane width. Everything after the
+// placeholder is dropped rather than kept: it's block-margin padding sized
+// for the short placeholder, not the real URL, and would just trail stale
+// spaces past the restored line.
+func restoreBareURLs(rendered string, urls []string) string {
+	if len(urls) == 0 {
+		return rendered
+	}
+	lines := strings.Split(rendered, "\n")
+	for i, url := range urls {
+		styled := termenv.String(url).Foreground(termenv.TrueColor.Color(colorLink)).Underline().String()
+		ph := urlPlaceholder(i)
+		for li, line := range lines {
+			if idx := strings.Index(line, ph); idx >= 0 {
+				lines[li] = line[:idx] + styled
+				break
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // renderMarkdown renders raw markdown at the given width (already reduced
 // from the pane width by the caller). Output is post-processed to guarantee
 // the hard requirements: no trailing-space padding, at most one blank line
@@ -125,6 +182,7 @@ func renderMarkdown(raw string, width int) (string, error) {
 	if width < 10 {
 		width = 10
 	}
+	raw, urls := stashBareURLs(raw)
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(styleConfig()),
 		glamour.WithWordWrap(width),
@@ -139,6 +197,7 @@ func renderMarkdown(raw string, width int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	out = restoreBareURLs(out, urls)
 	return tidy(out), nil
 }
 

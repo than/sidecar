@@ -38,11 +38,16 @@ func TestCompactSpacing(t *testing.T) {
 }
 
 // NEVER render wider than the requested width — padded/overwide lines wrap
-// in the pane and fake double-spacing.
+// in the pane and fake double-spacing. Bare-URL-only lines are the one
+// deliberate exception: they're kept intact on one line even past the
+// width rather than split mid-URL (see TestBareURLIntact and issue #15).
 func TestNeverWiderThanWidth(t *testing.T) {
 	for _, width := range []int{40, 60, 78} {
 		out := renderFixture(t, width)
 		for i, line := range strings.Split(out, "\n") {
+			if strings.Contains(line, "https://") || strings.Contains(line, "http://") {
+				continue
+			}
 			if w := visibleWidth(line); w > width {
 				t.Errorf("width %d, line %d: visible width %d: %q",
 					width, i, w, stripANSI(line))
@@ -62,9 +67,11 @@ func TestNoTrailingSpacePadding(t *testing.T) {
 }
 
 // Bare URLs must survive intact on a single line so Ghostty's link
-// detection can make them clickable.
+// detection can make them clickable — even at pane widths narrower than
+// the URL itself, which is the common case and is what used to hard-split
+// mid-URL (issue #15).
 func TestBareURLIntact(t *testing.T) {
-	out := stripANSI(renderFixture(t, 78))
+	out := stripANSI(renderFixture(t, 40))
 	for _, url := range []string{
 		"https://github.com/example/app/pull/412",
 		"https://qa.example.dev/checkout-race",
