@@ -411,6 +411,26 @@ func TestBareURLInIndentedCodeBlockUntouched(t *testing.T) {
 	}
 }
 
+// An indented code block is a block, not a per-line property: a second URL
+// deeper in the same block (whose own immediate predecessor isn't blank)
+// must be protected exactly like the first one, whose predecessor is.
+// Round-7 review's confirmed bug: a per-line wasPrevBlank check caught the
+// first URL and missed the second, so two URLs in the same verbatim block
+// rendered differently from each other.
+func TestBareURLIndentedCodeBlockMultiLine(t *testing.T) {
+	raw := "Run these:\n\n    https://example.test/first-verbatim-command\n    https://example.test/second-verbatim-command\n"
+	out, err := renderMarkdown(raw, 40, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oscLinkRE.MatchString(out) {
+		t.Errorf("a URL deeper in a multi-line indented code block got hyperlinked:\n%s", stripANSI(out))
+	}
+	if strings.Contains(out, "\x1fU") {
+		t.Errorf("a stash placeholder leaked into multi-line indented-code-block output:\n%s", stripANSI(out))
+	}
+}
+
 // Emoji section markers are double-width; wrapping must account for that.
 func TestEmojiHeadingWidth(t *testing.T) {
 	out, err := renderMarkdown("## 🔴 Needs action right now with a long heading tail end", 40, true)

@@ -99,10 +99,9 @@ func main() {
 // alt-screen. Handy for piping, CI, and quick inline checks. Width is the
 // terminal width (minus 2) when stdout is a TTY, else 80. Bare-URL OSC 8
 // hyperlinking (and the display-text elision that comes with it) is skipped
-// whenever stdout isn't a TTY: the same term.GetSize failure that picks the
-// width-80 fallback means whatever's on the other end of the pipe — grep,
-// an editor, a CI log — can't render the escape sequence anyway, so a full,
-// plain, un-elided URL serves it better than a shortened one.
+// whenever stdout isn't a TTY: whatever's on the other end of the pipe —
+// grep, an editor, a CI log — can't render the escape sequence anyway, so a
+// full, plain, un-elided URL serves it better than a shortened one.
 func runStatic(args []string) int {
 	path := defaultBoardPath()
 	if len(args) > 0 {
@@ -118,10 +117,10 @@ func runStatic(args []string) int {
 		fmt.Fprintln(os.Stderr, "sidecar:", err)
 		return 1
 	}
+	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
 	width := 80
-	isTTY := false
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
-		width, isTTY = w, true
+		width = w
 	}
 	out, err := renderMarkdown(string(data), width-2, isTTY)
 	if err != nil {

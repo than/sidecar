@@ -147,6 +147,26 @@ func urlPlaceholder(i int) string {
 // for the case restoreBareURLs' own placeholder search doesn't find one.
 var residualPlaceholder = regexp.MustCompile(`\x1fU\d+\x1f`)
 
+// listMarkerPrefix matches a line beginning with a list marker, regardless
+// of what follows — used to tell an indented code block's opening line
+// apart from a list item that merely reaches the same 4-space indent.
+var listMarkerPrefix = regexp.MustCompile(`^[ \t]*(?:[-*+]|\d+[.)])\s+`)
+
+// leadingIndent returns line's leading run of spaces/tabs.
+func leadingIndent(line string) string {
+	i := 0
+	for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+		i++
+	}
+	return line[:i]
+}
+
+// hasCodeIndent reports whether indent (spaces/tabs only) is deep enough to
+// open or continue a CommonMark indented code block: 4+ spaces, or any tab.
+func hasCodeIndent(indent string) bool {
+	return strings.Contains(indent, "\t") || len(indent) >= 4
+}
+
 // stashBareURLs replaces every bare-URL-only line with a short placeholder,
 // returning the stashed URLs in order (skipping lines inside fenced or
 // indented code blocks). Glamour's word-wrap hard-splits a long link token
@@ -160,10 +180,12 @@ func stashBareURLs(raw string) (string, []string) {
 	var urls []string
 	var fenceChar byte
 	var fenceLen int
+	inIndentedCode := false
 	prevBlank := true // document start counts as a boundary, same as CommonMark
 	for i, line := range lines {
 		wasPrevBlank := prevBlank
-		prevBlank = strings.TrimSpace(line) == ""
+		blank := strings.TrimSpace(line) == ""
+		prevBlank = blank
 
 		if m := fenceLine.FindStringSubmatch(line); m != nil {
 			c, n := m[1][0], len(m[1])
@@ -182,29 +204,41 @@ func stashBareURLs(raw string) (string, []string) {
 		if fenceChar != 0 {
 			continue
 		}
+
+		// Indented code is a *block*, not a per-line property: once a
+		// blank line followed by a 4-space (or tab) indented, unmarked
+		// line opens one, every subsequent indented line belongs to it —
+		// regardless of whether that later line's own predecessor was
+		// blank — until a non-blank, non-indented line closes it. Tracked
+		// as running state across every line (URL or not), symmetric with
+		// the fence tracking above, so a second URL deeper in the same
+		// block doesn't fall through the guard the first URL was caught by.
+		indent := leadingIndent(line)
+		indented := hasCodeIndent(indent)
+		switch {
+		case inIndentedCode:
+			if !blank && !indented {
+				inIndentedCode = false
+			}
+		case wasPrevBlank && !blank && indented && !listMarkerPrefix.MatchString(line):
+			inIndentedCode = true
+		}
+		if inIndentedCode {
+			continue
+		}
+
 		m := bareURLLine.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
-		indent, marker := m[1], m[2]
-		// A 4-space (or tab) indent with no list marker and a blank line
-		// immediately before it is CommonMark's indented code block —
-		// verbatim content, leave it untouched, same as a fence. Requiring
-		// the preceding blank line is what tells it apart from a nested
-		// list's lazy continuation line, which reaches the same 4-space
-		// depth (glamour's LevelIndent is 2/level) but isn't code.
-		//
 		// Known boundary, not a bug: a *loose* list's second paragraph
-		// (blank line, then a 4-space-indented URL under a bullet) looks
-		// identical to this guard and falls through to the old wrap-split.
-		// Distinguishing it needs real list-context tracking; the board
-		// convention doesn't produce loose lists, so this hasn't been
-		// worth the complexity.
-		if marker == "" && (strings.Contains(indent, "\t") || len(indent) >= 4) && wasPrevBlank {
-			continue
-		}
+		// (blank line, then a 4-space-indented URL under a bullet) opens
+		// this same indented-code state and falls through to the old
+		// wrap-split. Distinguishing it needs real list-context tracking;
+		// the board convention doesn't produce loose lists, so this hasn't
+		// been worth the complexity.
 		urls = append(urls, m[3])
-		lines[i] = indent + marker + urlPlaceholder(len(urls)-1) + m[4]
+		lines[i] = m[1] + m[2] + urlPlaceholder(len(urls)-1) + m[4]
 	}
 	return strings.Join(lines, "\n"), urls
 }
@@ -282,6 +316,7 @@ func restoreBareURLs(rendered string, urls []string, width int) string {
 		return rendered
 	}
 	lines := strings.Split(rendered, "\n")
+	lr, lg, lb := hexToRGB(colorLink) // loop-invariant
 	for i, url := range urls {
 		ph := urlPlaceholder(i)
 		for li, line := range lines {
@@ -312,7 +347,6 @@ func restoreBareURLs(rendered string, urls []string, width int) string {
 			// a degraded profile termenv.String would silently drop the
 			// styling and this would be the one link on screen that isn't
 			// truecolor.
-			lr, lg, lb := hexToRGB(colorLink)
 			styled := fmt.Sprintf("\x1b[4;38;2;%d;%d;%dm%s\x1b[0m", lr, lg, lb, display)
 			lines[li] = prefix + hyperlink(url, styled) + rest
 			break
