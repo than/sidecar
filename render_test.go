@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -420,6 +421,25 @@ func TestEmojiHeadingWidth(t *testing.T) {
 		if w := visibleWidth(line); w > 40 {
 			t.Errorf("line %d: visible width %d > 40: %q", i, w, stripANSI(line))
 		}
+	}
+}
+
+// A hyperlink's display text must carry raw truecolor SGR, not termenv's
+// auto-detected-profile styling — every test here runs with stdout not a
+// terminal, which is exactly the condition under which termenv.String
+// would silently drop the styling and this would be the one link on
+// screen that isn't truecolor while everything else (forced via
+// glamour.WithColorProfile / diff.go's hand-written 38;2;r;g;b) stays so.
+func TestHyperlinkDisplayIsRawTruecolor(t *testing.T) {
+	out := renderFixture(t, 40)
+	m := oscLinkRE.FindStringSubmatch(out)
+	if m == nil {
+		t.Fatal("no hyperlink found in fixture at width 40")
+	}
+	lr, lg, lb := hexToRGB(colorLink)
+	want := fmt.Sprintf("\x1b[4;38;2;%d;%d;%dm", lr, lg, lb)
+	if !strings.Contains(m[2], want) {
+		t.Errorf("display text missing raw truecolor SGR %q: %q", want, m[2])
 	}
 }
 

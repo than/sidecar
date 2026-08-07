@@ -303,7 +303,17 @@ func restoreBareURLs(rendered string, urls []string, width int) string {
 			// one metric and building the display text with a different
 			// one is exactly how that invariant would quietly break again.
 			display := xansi.Truncate(stripControlBytes(url), budget, "…")
-			styled := termenv.String(display).Foreground(termenv.TrueColor.Color(colorLink)).Underline().String()
+			// Raw ANSI, not termenv.String: termenv.String binds to
+			// termenv's auto-detected package-global Output profile, which
+			// this codebase deliberately overrides everywhere else — the
+			// glamour renderer is forced to termenv.TrueColor below, and
+			// diff.go writes 38;2;r;g;b by hand for the same reason
+			// ("piped/degraded profiles were how glow washed out"). Under
+			// a degraded profile termenv.String would silently drop the
+			// styling and this would be the one link on screen that isn't
+			// truecolor.
+			lr, lg, lb := hexToRGB(colorLink)
+			styled := fmt.Sprintf("\x1b[4;38;2;%d;%d;%dm%s\x1b[0m", lr, lg, lb, display)
 			lines[li] = prefix + hyperlink(url, styled) + rest
 			break
 		}
@@ -351,12 +361,18 @@ func renderMarkdown(raw string, width int, linkify bool) (string, error) {
 		// Defensive: if a placeholder somehow didn't survive glamour intact
 		// (an unanticipated reflow edge case), strip the residual bytes
 		// rather than let a raw \x1f-delimited token land on screen — the
-		// URL is lost either way at that point; better an invisible
-		// failure than a garbled one. The plain \x1f pass after it is the
-		// same safety net for the case the placeholder itself got split
-		// across a wrap: the paired-delimiter regex above can't match half
-		// a token, but a lone \x1f is unambiguously our own byte (nothing
-		// else in this pipeline emits it) and safe to drop on sight.
+		// URL is lost either way at that point; better a bare, mostly
+		// inert failure than one carrying our own control bytes. The plain
+		// \x1f pass after it also catches a placeholder that got hard-
+		// broken across a wrap (the paired-delimiter regex above can't
+		// match half a token) — \x1f itself is unambiguously our own byte
+		// (nothing else in this pipeline emits it), so it's always safe to
+		// drop. It's not a fully invisible failure in that split case,
+		// though: only the delimiter bytes are removed, so a naked "U0"
+		// can be left as plain visible text. Narrowing that further would
+		// mean matching digits without a \x1f anchor, which risks eating
+		// real board text (e.g. "U2", "Update") instead — worse than the
+		// cosmetic residue it would prevent.
 		out = residualPlaceholder.ReplaceAllString(out, "")
 		out = strings.ReplaceAll(out, "\x1f", "")
 	}
