@@ -570,3 +570,27 @@ func TestTrueColorOutput(t *testing.T) {
 		t.Errorf("output contains no truecolor sequences — profile degraded?")
 	}
 }
+
+// The starter comment now holds blank lines, "## " headings and "- " bullets
+// (the worked wrong→right example). A CommonMark type-2 HTML block runs to
+// "-->" regardless, so the whole comment stays hidden — but if that ever
+// breaks, the scaffolded board opens with the example rendered as real board
+// content. parseBoard has its own guard (TestRenderTemplateExampleStaysInComment);
+// this holds the same invariant at the viewer layer.
+func TestStarterTemplateCommentNeverRenders(t *testing.T) {
+	out, err := renderMarkdown(renderTemplate(defaultSections()), 80, false)
+	if err != nil {
+		t.Fatalf("renderMarkdown: %v", err)
+	}
+	for _, leak := range []string{
+		"Story in the wrong section",
+		"Split by who acts",
+		"Per-app PRs",
+		"Apple Developer documentation voice",
+		"agent: keep this current",
+	} {
+		if strings.Contains(out, leak) {
+			t.Errorf("comment text %q leaked into the rendered view:\n%s", leak, out)
+		}
+	}
+}
