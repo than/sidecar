@@ -531,6 +531,28 @@ func TestClaudeNoteWritingRules(t *testing.T) {
 			t.Errorf("note missing %q", want)
 		}
 	}
+	// Abstract rules alone let agents write status-as-story and file it under
+	// the human-action section. The note carries the placement rule and one
+	// worked wrong→right pair.
+	for _, want := range []string{"where things stand, not how they got there", "only holds items where the human is the blocker", "Split by who acts (right)"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note missing %q", want)
+		}
+	}
+}
+
+// The note names the first configured section in its placement rule, so a
+// custom section set must not leave the rule pointing at the built-in "🧠
+// Needs action".
+func TestClaudeNotePlacementRuleUsesFirstSection(t *testing.T) {
+	custom := []Section{{"", "Todo", "the human acts"}, {"", "Doing", "in flight"}}
+	note := claudeNote("board.md", custom)
+	if !strings.Contains(note, "`## Todo`") {
+		t.Errorf("placement rule doesn't name the first section:\n%s", note)
+	}
+	if strings.Contains(note, "🧠 Needs action") {
+		t.Errorf("note hardcodes the default first section:\n%s", note)
+	}
 }
 
 func TestMigrateLegacyBoard(t *testing.T) {

@@ -62,11 +62,44 @@ func TestRenderTemplateDefault(t *testing.T) {
 	if !strings.Contains(out, "Prune early sections") {
 		t.Errorf("template missing prune instruction:\n%s", out)
 	}
-	if !strings.Contains(out, "Never hard-wrap entry text") {
-		t.Errorf("template missing no-hard-wrap instruction:\n%s", out)
+	for _, want := range []string{
+		"never hard-wrap; the viewer wraps to the pane",
+		"Apple Developer documentation voice",
+		"two sentences of detail",
+		"bare URLs, each on its own line",
+		"where things stand, not how they got there",
+		"only holds items where the human is the blocker",
+		"Split by who acts (right)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("template missing entry-style instruction %q:\n%s", want, out)
+		}
 	}
 	if !strings.HasSuffix(out, "\n") || strings.HasSuffix(out, "\n\n") {
 		t.Errorf("template must end in exactly one newline:\n%q", out[len(out)-3:])
+	}
+}
+
+// The starter comment carries a worked example with real-looking "## "
+// headings and "- " bullets. They sit inside the HTML comment, so parseBoard
+// must skip them — otherwise the example's sections and items surface on the
+// board and in every diff.
+func TestRenderTemplateExampleStaysInComment(t *testing.T) {
+	b, ok := parseBoard(renderTemplate(defaultSections()))
+	if !ok {
+		t.Fatal("parseBoard found no sections in the starter template")
+	}
+	if len(b.Sections) != len(defaultSections()) {
+		var got []string
+		for _, s := range b.Sections {
+			got = append(got, s.Label)
+		}
+		t.Fatalf("want %d sections, got %d: %v", len(defaultSections()), len(b.Sections), got)
+	}
+	for _, s := range b.Sections {
+		if len(s.Items) != 1 {
+			t.Errorf("section %q: want 1 placeholder item, got %d", s.Label, len(s.Items))
+		}
 	}
 }
 

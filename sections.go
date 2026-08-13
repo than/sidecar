@@ -85,6 +85,57 @@ func defaultSections() []Section {
 // that "moved".
 const emptySectionPlaceholder = "nothing yet"
 
+// entryStyleRules is the shared instruction set that keeps entries
+// status-shaped: the shape of one entry, then which section it belongs in.
+// Both the starter template comment (renderTemplate) and the CLAUDE.md note
+// (claudeNote) render it, so the rules can't drift apart — whoever writes an
+// entry has the board file open, and CLAUDE.md may not be in context at all.
+// bullet is the caller's list marker. The placement rule names the first
+// configured section, so a custom set never points at a heading the board
+// doesn't have.
+func entryStyleRules(sections []Section, bullet string) string {
+	var b strings.Builder
+	b.WriteString("Write entries in Apple Developer documentation voice: declarative, front-loaded verb, present tense, one fact per sentence. State where things stand, not how they got there — no dates, no \"asked\", no \"then we decided\".\n\n")
+	b.WriteString("One entry is at most:\n")
+	for _, r := range []string{
+		"a status tag and title on the first line",
+		"two sentences of detail — more belongs in the PR or issue you link",
+		"bare URLs, each on its own line",
+		"one `Next:` line naming the single next action",
+		"entry text on one line — never hard-wrap; the viewer wraps to the pane and source newlines become visible breaks",
+	} {
+		b.WriteString(bullet + r + "\n")
+	}
+	if len(sections) > 0 {
+		b.WriteString("\n`" + sections[0].Header() + "` only holds items where the human is the blocker, and each one's `Next:` line names what they do. Nothing for the human to do? It belongs in a later section.\n")
+	}
+	return b.String()
+}
+
+// entryStyleExample is the worked wrong→right pair, keyed to the two failures
+// that actually occur: narrative history, and a status roll-up filed under the
+// human-action section where nothing is asked of the human. Abstract rules
+// alone let both through, so the templates ship an example too. It needs two
+// sections to demonstrate the split; with fewer, there's no second section to
+// move anything to and the rules stand on their own.
+func entryStyleExample(sections []Section) string {
+	if len(sections) < 2 {
+		return ""
+	}
+	first, second := sections[0].Header(), sections[1].Header()
+	return "Story in the wrong section (wrong):\n\n" +
+		first + "\n" +
+		"- Per-app PRs are owned by their sessions — #259 (Checkout), #239 → #243 (Billing), #256 (Admin, still parked on you creating the \"Admin (Development)\" API key), and the Reports app's store submission. Ask each session for status rather than this queue. Cross-cutting note that outlives them: #239 and #259 both add a vitest suite to the same test:all line, so whichever merges second needs a rebase.\n\n" +
+		"Split by who acts (right):\n\n" +
+		first + "\n" +
+		"- #256 (Admin) is blocked: it needs an \"Admin (Development)\" API key that only you can create.\n" +
+		"  https://github.com/o/r/pull/256\n" +
+		"  Next: Create the key in the provider dashboard.\n\n" +
+		second + "\n" +
+		"- Per-app PRs run in their own sessions: #259, #243, #256, plus the Reports app's store submission. Ask each session for status.\n" +
+		"- #239 and #259 both add a vitest suite to the same `test:all` line — whichever merges second rebases.\n"
+}
+
 // renderTemplate builds the starter file body for the chosen sections. Bare
 // URLs on their own line stay clickable; hintless sections are omitted from
 // the comment's "= meaning" list.
@@ -101,8 +152,10 @@ func renderTemplate(sections []Section) string {
 		}
 	}
 	b.WriteString("· Prune early sections as items move; let later ones accumulate as a log.\n")
-	b.WriteString("· One line per item where you can; bare URLs on their own line stay clickable.\n")
-	b.WriteString("· Never hard-wrap entry text — the viewer wraps to the pane; source newlines become visible breaks.\n")
+	b.WriteString("\n" + entryStyleRules(sections, "· "))
+	if ex := entryStyleExample(sections); ex != "" {
+		b.WriteString("\n" + ex)
+	}
 	b.WriteString("-->\n\n")
 	for _, s := range sections {
 		b.WriteString(s.Header() + "\n\n- " + emptySectionPlaceholder + "\n\n")

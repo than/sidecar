@@ -282,24 +282,21 @@ func claudeNote(rel string, sections []Section) string {
 		}
 		secLines.WriteString("\n")
 	}
+	var example string
+	if ex := entryStyleExample(sections); ex != "" {
+		example = "\n```markdown\n" + ex + "```\n"
+	}
 	const tmpl = "<!-- sidecar:review-queue -->\n" +
 		"## Sidecar board\n\n" +
 		"Maintain `%[1]s` — the live board the human watches with `sidecar`.\n" +
 		"Move each item to the section that matches its state:\n\n" +
 		"%[2]s" +
-		"\nWrite entries in Apple Developer documentation voice: declarative,\n" +
-		"front-loaded verb, present tense, one fact per sentence. State outcomes,\n" +
-		"not process.\n\n" +
-		"One entry is at most:\n" +
-		"- a status tag and title on the first line\n" +
-		"- two sentences of detail — more belongs in the PR or issue you link\n" +
-		"- bare URLs, each on its own line\n" +
-		"- one `Next:` line naming the single next action (optional)\n" +
-		"- entry text on one line — never hard-wrap; the viewer wraps to the pane\n\n" +
-		"If sidecar isn't installed: `go install github.com/than/sidecar@latest`,\n" +
+		"\n%[3]s" +
+		"%[4]s" +
+		"\nIf sidecar isn't installed: `go install github.com/than/sidecar@latest`,\n" +
 		"or a prebuilt binary from https://github.com/than/sidecar/releases/latest\n" +
 		"<!-- /sidecar:review-queue -->\n"
-	return fmt.Sprintf(tmpl, rel, secLines.String())
+	return fmt.Sprintf(tmpl, rel, secLines.String(), entryStyleRules(sections, "- "), example)
 }
 
 // replaceClaudeNote swaps the content between the sidecar markers for note.
