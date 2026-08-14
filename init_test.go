@@ -34,7 +34,7 @@ func TestInitScaffolds(t *testing.T) {
 	if !strings.HasPrefix(string(data), "# Sidecar") {
 		t.Errorf("scaffolded file missing header:\n%s", data)
 	}
-	for _, marker := range []string{"🧠", "🚧", "🚘", "✅", "📦"} {
+	for _, marker := range []string{"🧠", "🤖", "🚧", "🚘", "✅", "📦"} {
 		if !strings.Contains(string(data), marker) {
 			t.Errorf("template missing section marker %q", marker)
 		}
@@ -536,7 +536,7 @@ func TestClaudeNoteWritingRules(t *testing.T) {
 	// worked wrong→right pair.
 	// Agents were citing the board and sidecar itself in PR bodies and commit
 	// messages, where the reader has neither.
-	for _, want := range []string{"where things stand, not how they got there", "only holds items where the human is the blocker", "Split by who acts (right)", "private channel between you and the human", "any other shared artifact"} {
+	for _, want := range []string{"where things stand, not how they got there", "only holds items where the human is the blocker", "Split by who acts (right)", "private channel between you and the human", "any other shared artifact", "every item there ends with a `Next:` line", "A finding, a question, or a status names no action"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note missing %q", want)
 		}
@@ -1140,4 +1140,45 @@ func TestRunInitYesCustomPathSkipsExcludePrompt(t *testing.T) {
 	if !strings.Contains(string(data), sidecarDirName+"/") {
 		t.Errorf(".sidecar/ not excluded alongside a custom path: %q", data)
 	}
+}
+
+// main() opens the viewer on whatever init just set up, so runInitBoard has to
+// hand back the board's absolute path. An empty path is the signal not to
+// launch — help and flag errors must return one.
+func TestRunInitBoardReturnsBoardPath(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	withWorkDir(t, dir, func() {
+		var code int
+		var board string
+		captureStdout(t, func() {
+			code, board = runInitBoard([]string{"--yes", "--no-claude"})
+		})
+		if code != 0 {
+			t.Fatalf("init exit = %d, want 0", code)
+		}
+		want, err := filepath.Abs(filepath.Join(sidecarDirName, "sidecar.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if board != want {
+			t.Errorf("board = %q, want %q", board, want)
+		}
+		if _, err := os.Stat(board); err != nil {
+			t.Errorf("returned board doesn't exist: %v", err)
+		}
+
+		captureStdout(t, func() {
+			code, board = runInitBoard([]string{"-h"})
+		})
+		if code != 0 || board != "" {
+			t.Errorf("help returned (%d, %q), want (0, \"\") so main doesn't launch", code, board)
+		}
+		captureStderr(t, func() {
+			code, board = runInitBoard([]string{"--bogus"})
+		})
+		if code != 2 || board != "" {
+			t.Errorf("unknown flag returned (%d, %q), want (2, \"\")", code, board)
+		}
+	})
 }

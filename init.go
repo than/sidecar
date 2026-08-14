@@ -12,14 +12,24 @@ import (
 	"golang.org/x/term"
 )
 
-// runInit scaffolds the target file and wires it into Claude Code. Every
+// runInit is the int-only form every caller but main() uses.
+func runInit(args []string) int {
+	code, _ := runInitBoard(args)
+	return code
+}
+
+// runInitBoard scaffolds the target file and wires it into Claude Code. Every
 // recommended default applies without asking: a legacy root SIDECAR.md is
 // migrated, the board's home is git-excluded, and a CLAUDE.md note plus
 // reconcile hook are written. --no-claude and --keep-board opt out of the
 // Claude Code wiring and the migration, respectively. --yes/-y skip the
 // interactive section picker that otherwise runs when a brand-new board is
-// created from a terminal. Returns a process exit code.
-func runInit(args []string) int {
+// created from a terminal.
+//
+// code is a process exit code. board is the absolute path of the board that
+// was set up, empty when init printed help or bailed before settling on one —
+// main() opens the viewer on it, so an empty board means "don't launch".
+func runInitBoard(args []string) (code int, board string) {
 	assumeYes := false
 	noClaude := false
 	keepBoard := false
@@ -44,11 +54,11 @@ func runInit(args []string) int {
 			fmt.Println("                 (default board only — ignored with a custom path;")
 			fmt.Println("                 no-op when .sidecar/sidecar.md already exists)")
 			fmt.Println("  --yes, -y      skip the section picker on a brand-new board")
-			return 0
+			return 0, ""
 		default:
 			if strings.HasPrefix(a, "-") {
 				fmt.Fprintf(os.Stderr, "sidecar init: unknown flag %q\n", a)
-				return 2
+				return 2, ""
 			}
 			rest = append(rest, a)
 		}
@@ -63,7 +73,7 @@ func runInit(args []string) int {
 	abs, err := filepath.Abs(expandTilde(target))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
-		return 1
+		return 1, ""
 	}
 
 	migrated := false
@@ -122,13 +132,13 @@ func runInit(args []string) int {
 			picked, interrupted := pickSections(defaultSections())
 			if interrupted {
 				fmt.Fprintln(os.Stderr, "sidecar init: canceled — nothing written.")
-				return 1
+				return 1, ""
 			}
 			sections = picked
 		}
 		if err := scaffold(abs, sections); err != nil {
 			fmt.Fprintln(os.Stderr, "sidecar init:", err)
-			return 1
+			return 1, ""
 		}
 		fmt.Printf("Created %s\n", target)
 	}
@@ -178,12 +188,18 @@ func runInit(args []string) int {
 		writeReconcileHook(root, rel, sections)
 	}
 
-	if isDefaultTarget {
+	// Interactive runs open the viewer straight away (main() does the
+	// launching), so the "Watch it:" hint would just be telling the human to
+	// do what's already happening. Piped and CI runs get the hint instead —
+	// they have no TUI to open.
+	if interactiveTTY() {
+		fmt.Println("\nOpening sidecar\u2026")
+	} else if isDefaultTarget {
 		fmt.Println("\nWatch it:  sidecar")
 	} else {
 		fmt.Printf("\nWatch it:  sidecar %s\n", target)
 	}
-	return 0
+	return 0, abs
 }
 
 // sectionsFromBoard derives Section values from an existing board's own "## "

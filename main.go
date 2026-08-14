@@ -18,7 +18,8 @@ var version = "dev"
 const help = `sidecar — live-updating markdown viewer for a terminal side pane
 
 usage: sidecar [file.md]         (default: .sidecar/sidecar.md)
-       sidecar init [file.md]    create the board and wire it into Claude Code
+       sidecar init [file.md]    create the board, wire it into Claude Code,
+                                 and open it
        sidecar init --yes        skip the section picker (stays non-blocking)
        sidecar init --no-claude  skip the CLAUDE.md note and reconcile hook
        sidecar init --keep-board point init at a legacy root SIDECAR.md
@@ -52,7 +53,15 @@ func main() {
 		case "-s", "--static":
 			os.Exit(runStatic(os.Args[2:]))
 		case "init":
-			os.Exit(runInit(os.Args[2:]))
+			code, board := runInitBoard(os.Args[2:])
+			// Setting the board up and then telling the human to run another
+			// command is a step for no reason — open it. A non-TTY run (CI, a
+			// pipe) has no viewer to open and exits with the hint instead, and
+			// an empty board means init printed help or bailed.
+			if code != 0 || board == "" || !interactiveTTY() {
+				os.Exit(code)
+			}
+			os.Exit(runViewer(board, false))
 		case "diff":
 			os.Exit(runDiff(os.Args[2:]))
 		}
@@ -82,6 +91,13 @@ func main() {
 
 	offerCreate(abs) // if missing and interactive, offer to scaffold before opening
 
+	os.Exit(runViewer(abs, noFlash))
+}
+
+// runViewer opens the live viewer on abs and blocks until the human quits.
+// Shared by viewer mode and by `sidecar init`, which opens the board it just
+// created rather than printing a command to run.
+func runViewer(abs string, noFlash bool) int {
 	p := tea.NewProgram(newModel(abs, noFlash),
 		tea.WithAltScreen(),
 		// No mouse capture: keeps the terminal's native text selection and
@@ -91,8 +107,9 @@ func main() {
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar:", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // runStatic renders the file once to stdout and exits — no watching, no

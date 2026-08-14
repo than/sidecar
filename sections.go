@@ -53,7 +53,7 @@ type Section struct {
 	Hint  string
 }
 
-// Header renders the markdown heading line, e.g. "## 🧠 Needs action", or
+// Header renders the markdown heading line, e.g. "## 🧠 Needs you", or
 // "## Todo" when there's no emoji.
 func (s Section) Header() string {
 	if s.Emoji == "" {
@@ -67,11 +67,15 @@ func (s Section) label() string {
 	return strings.TrimPrefix(s.Header(), "## ")
 }
 
-// defaultSections is the built-in five, used whenever the user doesn't pick a
-// custom set (piped stdin, cancel, or an emptied list).
+// defaultSections is the built-in set, used whenever the user doesn't pick a
+// custom set (piped stdin, cancel, or an emptied list). 🧠 names its reader so
+// there's no ambiguity about whose action it holds, and 🤖 gives queued work a
+// home — without it, unstarted agent work lands in 🧠 (nothing for the human to
+// do) or 🚧 (not actually underway).
 func defaultSections() []Section {
 	return []Section{
-		{"🧠", "Needs action", "surfaced for the human to act on"},
+		{"🧠", "Needs you", "the human is the blocker"},
+		{"🤖", "Agent queue", "queued for an agent, not started"},
 		{"🚧", "In progress", "actively being worked"},
 		{"🚘", "Parked", "deferred, not dropped"},
 		{"✅", "Done", "merged, not yet released"},
@@ -107,22 +111,36 @@ func entryStyleRules(sections []Section, bullet string) string {
 		b.WriteString(bullet + r + "\n")
 	}
 	if len(sections) > 0 {
-		b.WriteString("\n`" + sections[0].Header() + "` only holds items where the human is the blocker, and each one's `Next:` line names what they do. Nothing for the human to do? It belongs in a later section.\n")
+		b.WriteString("\n`" + sections[0].Header() + "` only holds items where the human is the blocker, and every item there ends with a `Next:` line naming what they do. A finding, a question, or a status names no action")
+		if len(sections) > 1 {
+			b.WriteString(" — it belongs in `" + sections[1].Header() + "` or a later section")
+		} else {
+			b.WriteString(" — it belongs in a later section")
+		}
+		b.WriteString(" until it needs a decision, and then the `Next:` line asks for that decision.\n")
 	}
 	return b.String()
 }
 
-// entryStyleExample is the worked wrong→right pair, keyed to the two failures
-// that actually occur: narrative history, and a status roll-up filed under the
-// human-action section where nothing is asked of the human. Abstract rules
-// alone let both through, so the templates ship an example too. It needs two
-// sections to demonstrate the split; with fewer, there's no second section to
-// move anything to and the rules stand on their own.
+// entryStyleExample is two worked wrong→right pairs, keyed to the failures
+// that actually occur on boards in the wild: a narrative roll-up filed under
+// the human-action section, and a well-shaped entry that still names no action.
+// Abstract rules let both through — 82% of first-section entries surveyed
+// carried no `Next:` line — so the templates ship examples too.
+//
+// The pairs need somewhere to move things to: agent is the queue for unstarted
+// work, prog the section for work underway. With only two sections both
+// collapse onto the second one; with fewer than two there's nowhere to move
+// anything and the rules stand alone.
 func entryStyleExample(sections []Section) string {
 	if len(sections) < 2 {
 		return ""
 	}
-	first, second := sections[0].Header(), sections[1].Header()
+	first, agent := sections[0].Header(), sections[1].Header()
+	prog := agent
+	if len(sections) > 2 {
+		prog = sections[2].Header()
+	}
 	return "Story in the wrong section (wrong):\n\n" +
 		first + "\n" +
 		"- Per-app PRs are owned by their sessions — #259 (Checkout), #239 → #243 (Billing), #256 (Admin, still parked on you creating the \"Admin (Development)\" API key), and the Reports app's store submission. Ask each session for status rather than this queue. Cross-cutting note that outlives them: #239 and #259 both add a vitest suite to the same test:all line, so whichever merges second needs a rebase.\n\n" +
@@ -131,9 +149,16 @@ func entryStyleExample(sections []Section) string {
 		"- #256 (Admin) is blocked: it needs an \"Admin (Development)\" API key that only you can create.\n" +
 		"  https://github.com/o/r/pull/256\n" +
 		"  Next: Create the key in the provider dashboard.\n\n" +
-		second + "\n" +
+		prog + "\n" +
 		"- Per-app PRs run in their own sessions: #259, #243, #256, plus the Reports app's store submission. Ask each session for status.\n" +
-		"- #239 and #259 both add a vitest suite to the same `test:all` line — whichever merges second rebases.\n"
+		"- #239 and #259 both add a vitest suite to the same `test:all` line — whichever merges second rebases.\n\n" +
+		"No action named (wrong):\n\n" +
+		first + "\n" +
+		"- #440 — the Ohio return may be filing only the local increment where the other states layer state and local separately. Largest open question.\n\n" +
+		"Queue the work instead (right):\n\n" +
+		agent + "\n" +
+		"- #440 — check whether the Ohio return files only the local increment where the other states layer state and local separately.\n" +
+		"  https://github.com/o/r/issues/440\n"
 }
 
 // renderTemplate builds the starter file body for the chosen sections. Bare

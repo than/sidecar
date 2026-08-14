@@ -29,10 +29,13 @@ func TestSectionLabel(t *testing.T) {
 
 func TestDefaultSections(t *testing.T) {
 	got := defaultSections()
-	if len(got) != 5 {
-		t.Fatalf("defaultSections len = %d, want 5", len(got))
+	if len(got) != 6 {
+		t.Fatalf("defaultSections len = %d, want 6", len(got))
 	}
-	wantEmoji := []string{"🧠", "🚧", "🚘", "✅", "📦"}
+	// 🧠 names its reader, and 🤖 gives queued-but-unstarted agent work a home.
+	// Without 🤖 that work lands in 🧠 (nothing for the human to do) or 🚧 (not
+	// actually in progress) — both observed across boards in the wild.
+	wantEmoji := []string{"🧠", "🤖", "🚧", "🚘", "✅", "📦"}
 	for i, e := range wantEmoji {
 		if got[i].Emoji != e {
 			t.Errorf("section %d emoji = %q, want %q", i, got[i].Emoji, e)
@@ -40,6 +43,9 @@ func TestDefaultSections(t *testing.T) {
 		if got[i].Name == "" || got[i].Hint == "" {
 			t.Errorf("section %d missing name/hint: %+v", i, got[i])
 		}
+	}
+	if got[0].Name != "Needs you" {
+		t.Errorf("first section = %q, want %q — the name must say whose action", got[0].Name, "Needs you")
 	}
 }
 
@@ -56,8 +62,8 @@ func TestRenderTemplateDefault(t *testing.T) {
 			t.Errorf("template comment missing hint for %q:\n%s", s.Name, out)
 		}
 	}
-	if strings.Count(out, "- nothing yet") != 5 {
-		t.Errorf("want 5 placeholder bullets, got %d", strings.Count(out, "- nothing yet"))
+	if strings.Count(out, "- nothing yet") != 6 {
+		t.Errorf("want 6 placeholder bullets, got %d", strings.Count(out, "- nothing yet"))
 	}
 	if !strings.Contains(out, "Prune early sections") {
 		t.Errorf("template missing prune instruction:\n%s", out)
@@ -70,6 +76,12 @@ func TestRenderTemplateDefault(t *testing.T) {
 		"where things stand, not how they got there",
 		"only holds items where the human is the blocker",
 		"Split by who acts (right)",
+		// 82% of first-section entries in the wild carry no `Next:` line. The
+		// old "one `Next:` line … (optional)" framing is what made that
+		// defensible, so the rule now states the requirement outright.
+		"every item there ends with a `Next:` line",
+		"A finding, a question, or a status names no action",
+		"No action named (wrong)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("template missing entry-style instruction %q:\n%s", want, out)

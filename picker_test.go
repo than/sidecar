@@ -28,18 +28,22 @@ func send(p picker, keys ...string) picker {
 	return p
 }
 
+// These assert picker mechanics against whatever defaultSections() currently
+// is, so changing the built-in set doesn't drag every picker test with it.
 func TestPickerToggleExcludes(t *testing.T) {
-	p := send(newPicker(defaultSections()), "space", "enter") // deselect row 0 (Needs action), then quit
+	def := defaultSections()
+	p := send(newPicker(def), "space", "enter") // deselect row 0, then quit
 	got := p.result()
-	if len(got) != 4 || got[0].Name != "In progress" {
+	if len(got) != len(def)-1 || got[0].Name != def[1].Name {
 		t.Fatalf("toggle didn't exclude row 0: %+v", got)
 	}
 }
 
 func TestPickerReorderDown(t *testing.T) {
-	p := send(newPicker(defaultSections()), "J", "enter") // move row 0 down past row 1, then quit
+	def := defaultSections()
+	p := send(newPicker(def), "J", "enter") // move row 0 down past row 1, then quit
 	got := p.result()
-	if got[0].Name != "In progress" || got[1].Name != "Needs action" {
+	if got[0].Name != def[1].Name || got[1].Name != def[0].Name {
 		t.Fatalf("J did not reorder: %+v", got[:2])
 	}
 	if p.cursor != 1 {
@@ -48,15 +52,17 @@ func TestPickerReorderDown(t *testing.T) {
 }
 
 func TestPickerReorderBounds(t *testing.T) {
-	p := send(newPicker(defaultSections()), "K", "enter") // already at top; no-op, then quit
-	if p.result()[0].Name != "Needs action" {
+	def := defaultSections()
+	p := send(newPicker(def), "K", "enter") // already at top; no-op, then quit
+	if p.result()[0].Name != def[0].Name {
 		t.Errorf("K at top should be a no-op")
 	}
 }
 
 func TestPickerDelete(t *testing.T) {
-	p := send(newPicker(defaultSections()), "d", "enter")
-	if len(p.result()) != 4 || p.result()[0].Name != "In progress" {
+	def := defaultSections()
+	p := send(newPicker(def), "d", "enter")
+	if len(p.result()) != len(def)-1 || p.result()[0].Name != def[1].Name {
 		t.Fatalf("delete row 0 failed: %+v", p.result())
 	}
 }
@@ -84,9 +90,10 @@ func TestPickerAddAndEdit(t *testing.T) {
 
 func TestPickerAddEmptyNameDropped(t *testing.T) {
 	// a: add, then leave name empty -> row is dropped on commit.
-	p := newPicker(defaultSections())
+	def := defaultSections()
+	p := newPicker(def)
 	p = send(p, "a", "enter", "enter", "enter", "enter") // empty emoji, empty name, empty hint, then quit
-	if len(p.result()) != 5 {
+	if len(p.result()) != len(def) {
 		t.Errorf("empty-name add should be dropped, got %d rows", len(p.result()))
 	}
 }

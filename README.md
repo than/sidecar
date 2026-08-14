@@ -19,7 +19,7 @@ Run Sidecar beside your Claude Code session in a split terminal. Claude edits `.
 
 | Claude Code | sidecar `.sidecar/sidecar.md` |
 | --- | --- |
-| edits `.sidecar/sidecar.md`,<br>transcript scrolls | 🧠 Needs action<br>🚧 In progress<br>🚘 Parked<br>✅ Done<br>📦 Shipped |
+| edits `.sidecar/sidecar.md`,<br>transcript scrolls | 🧠 Needs you<br>🤖 Agent queue<br>🚧 In progress<br>🚘 Parked<br>✅ Done<br>📦 Shipped |
 
 Any split-pane setup works — [Supacode], tmux, or your terminal’s built-in splits (Ghostty, iTerm2, WezTerm). To keep the queue current, use the `UserPromptSubmit` hook that `sidecar init` installs by default. It reminds Claude to update the file each turn, so the view stays fresh. For details, see [Connect it to Claude Code](#connect-it-to-claude-code).
 
