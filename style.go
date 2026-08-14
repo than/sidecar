@@ -225,7 +225,9 @@ func inlineDisplay(url string) string {
 // around a token of the final size, which is what keeps the URL off the
 // wrap point entirely. Clamped below the wrap width because an oversize
 // token doesn't split — it overflows, breaking the one invariant every
-// line in this renderer holds.
+// line in this renderer holds. Callers pass width already reduced by the
+// line's own indent: glamour gives an indented block that much less room,
+// and a fixed margin here wouldn't grow with nesting depth.
 func inlineReserve(display string, width int) int {
 	limit := width - 4
 	if limit < 8 {
@@ -286,7 +288,11 @@ func codeSpanRanges(line string) [][2]int {
 			}
 		}
 		if !closed {
-			break // unclosed run: nothing after it is a span either
+			// An unclosed run is literal text, but it doesn't stop the
+			// scan: a properly closed pair later on the same line is
+			// still a span. i already advanced past the run, so resuming
+			// from here can't loop.
+			continue
 		}
 		i = j
 	}
@@ -332,18 +338,25 @@ func stashInlineURLs(line string, urls *[]string, width int) string {
 		if start >= 1 && line[start-1] == '<' {
 			continue // an autolink
 		}
+		if start >= 1 && line[start-1] == '[' {
+			// The label half of "[url](target)". Stashing it would make a
+			// click open the label instead of the real target.
+			continue
+		}
 		if inCodeSpan(start) {
 			continue // verbatim: a command the reader copies
 		}
 		url := trimURLTail(line[start:end])
-		if url == "" {
+		if inlineDisplay(url) == "" {
+			// Nothing to show — "https://." trims down to a bare scheme,
+			// and an OSC 8 pair wrapping no text is worse than raw text.
 			continue
 		}
 		b.WriteString(line[cursor:start])
 		cursor = start + len(url)
 		idx := len(*urls)
 		*urls = append(*urls, url)
-		b.WriteString(inlinePlaceholder(idx, inlineReserve(inlineDisplay(url), width)))
+		b.WriteString(inlinePlaceholder(idx, inlineReserve(inlineDisplay(url), width-visibleWidth(leadingIndent(line)))))
 	}
 	if cursor == 0 {
 		return line
@@ -358,23 +371,47 @@ func stashInlineURLs(line string, urls *[]string, width int) string {
 // so no line changes width and the shared-budget arithmetic the own-line
 // path does afterwards still measures a truthful line.
 func restoreInlineURLs(rendered string, urls []string, lr, lg, lb int) string {
-	return inlinePlaceholderFind.ReplaceAllStringFunc(rendered, func(tok string) string {
-		m := inlinePlaceholderFind.FindStringSubmatch(tok)
-		idx, err := strconv.Atoi(m[1])
+	locs := inlinePlaceholderFind.FindAllStringSubmatchIndex(rendered, -1)
+	if locs == nil {
+		return rendered
+	}
+	var b strings.Builder
+	cursor := 0
+	for _, m := range locs {
+		b.WriteString(rendered[cursor:m[0]])
+		cursor = m[1]
+		idx, err := strconv.Atoi(rendered[m[2]:m[3]])
 		if err != nil || idx < 0 || idx >= len(urls) {
-			return ""
+			continue
 		}
-		reserve := len(m[1]) + len(m[2]) + 1 // "I" + digits + padding
+		reserve := (m[3] - m[2]) + (m[5] - m[4]) + 1 // "I" + digits + padding
 		display := xansi.Truncate(inlineDisplay(urls[idx]), reserve, "…")
-		// Close the underline and the foreground colour specifically rather
-		// than resetting everything: an inline URL sits inside whatever run
-		// glamour opened for the surrounding text node, so a blanket
-		// \x1b[0m would drop that node's bold, or an H1's background, for
-		// the rest of the line. The own-line path can afford \x1b[0m
-		// because it owns its whole line.
-		styled := fmt.Sprintf("\x1b[4;38;2;%d;%d;%dm%s\x1b[24;39m", lr, lg, lb, display)
-		return hyperlink(urls[idx], styled)
-	})
+		styled := fmt.Sprintf("\x1b[4;38;2;%d;%d;%dm%s", lr, lg, lb, display)
+		b.WriteString(hyperlink(urls[idx], styled))
+		b.WriteString(enclosingSGR(rendered, m[0]))
+	}
+	b.WriteString(rendered[cursor:])
+	return b.String()
+}
+
+// sgrFind matches one SGR (colour/attribute) escape.
+var sgrFind = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// enclosingSGR is what to emit after an inline link so styling is handed back
+// the way it was found: underline off, then a replay of the last SGR in
+// effect on that rendered line. A blanket \x1b[0m would drop an enclosing
+// bold or an H1's background, and a plain "39" is no better — it resets the
+// foreground to the terminal's default rather than glamour's, dropping body
+// text's grey, an H2's amber, or an H1's black-on-lavender for the rest of
+// the line. glamour opens one run for the whole text node the URL sits
+// inside, so that run has to be put back exactly.
+func enclosingSGR(rendered string, at int) string {
+	lineStart := strings.LastIndexByte(rendered[:at], '\n') + 1
+	prior := sgrFind.FindAllString(rendered[lineStart:at], -1)
+	if len(prior) == 0 {
+		return "\x1b[24;39m" // no enclosing run: just close what we opened
+	}
+	return "\x1b[24m" + prior[len(prior)-1]
 }
 
 // stashBareURLs replaces every bare-URL-only line with a short placeholder,

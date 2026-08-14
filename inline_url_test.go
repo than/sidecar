@@ -327,3 +327,91 @@ func TestInlineAndOwnLineURLInOneItem(t *testing.T) {
 		}
 	}
 }
+
+// An unclosed backtick run is literal text, but scanning resumes after it —
+// a properly closed pair later on the same line is still a code span.
+func TestCodeSpanScanResumesAfterUnclosedRun(t *testing.T) {
+	src := "## S\n\n- a ``x and `curl https://example.test/a` done\n"
+	out, err := renderMarkdown(src, 100, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := oscTargets(out); len(got) != 0 {
+		t.Errorf("URL in a closed span after an unclosed run was hyperlinked: %v", got)
+	}
+	// Direct unit check on the scanner.
+	line := "a ``x and `curl https://example.test/a` done"
+	spans := codeSpanRanges(line)
+	if len(spans) != 1 {
+		t.Fatalf("codeSpanRanges = %v, want one span for the closed pair", spans)
+	}
+	if !strings.Contains(line[spans[0][0]:spans[0][1]], "curl") {
+		t.Errorf("span %v is not the closed pair: %q", spans[0], line[spans[0][0]:spans[0][1]])
+	}
+}
+
+// A URL in a link's label position is markdown syntax too. Stashing it made
+// the click open the label URL rather than the real target.
+func TestInlineURLAsLinkLabelLeftAlone(t *testing.T) {
+	src := "## S\n\n- [https://example.test/label](https://example.test/target)\n"
+	out, err := renderMarkdown(src, 100, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "\x1f") {
+		t.Errorf("a placeholder leaked:\n%q", out)
+	}
+	for _, tgt := range oscTargets(out) {
+		if strings.Contains(tgt, "/label") {
+			t.Errorf("click would open the label URL, not the target: %v", oscTargets(out))
+		}
+	}
+}
+
+// A scheme with nothing after it has no display text; emitting an OSC 8 pair
+// around nothing is worse than leaving the text alone.
+func TestInlineURLDegenerateSchemeOnly(t *testing.T) {
+	// "https://." matches, then trimURLTail sheds the period and leaves a
+	// bare scheme whose display text is empty.
+	out, err := renderMarkdown("## S\n\n- see https://. now.\n", 100, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := oscTargets(out); len(got) != 0 {
+		t.Errorf("empty hyperlink emitted: %v", got)
+	}
+	if strings.Contains(out, "\x1f") {
+		t.Errorf("a placeholder leaked:\n%q", out)
+	}
+}
+
+// Closing an inline link must restore the foreground glamour had set, not the
+// terminal default — otherwise the rest of the run (body text, an H2's amber,
+// an H1's black-on-lavender) renders in the wrong colour.
+func TestInlineURLRestoresEnclosingForeground(t *testing.T) {
+	out, err := renderMarkdown("## S\n\n- before https://example.test/a and after\n", 100, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := strings.Index(out, oscClose)
+	if i < 0 {
+		t.Fatal("no hyperlink in output")
+	}
+	tail := out[i+len(oscClose):]
+	if strings.HasPrefix(tail, "\x1b[24;39m") {
+		t.Error("link close resets to the terminal default foreground instead of replaying the enclosing style")
+	}
+	// Whatever follows must re-establish an explicit colour before any text.
+	if j := strings.IndexFunc(tail, func(r rune) bool { return r == 'a' }); j >= 0 {
+		if !strings.Contains(tail[:j], "38;2;") {
+			t.Errorf("no truecolor foreground re-established after the link: %q", tail[:min(j, 60)])
+		}
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
