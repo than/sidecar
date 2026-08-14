@@ -146,7 +146,7 @@ func urlPlaceholder(i int) string {
 
 // residualPlaceholder matches any urlPlaceholder token — a fallback sweep
 // for the case restoreBareURLs' own placeholder search doesn't find one.
-var residualPlaceholder = regexp.MustCompile(`\x1fU\d+\x1f`)
+var residualPlaceholder = regexp.MustCompile(`\x1f(?:U\d+|I\d+x*)\x1f`)
 
 // listMarkerPrefix matches a line beginning with a list marker, regardless
 // of what follows — used to tell an indented code block's opening line
@@ -191,7 +191,10 @@ func trimURLTail(url string) string {
 	for len(url) > 0 {
 		c := url[len(url)-1]
 		switch c {
-		case '.', ',', ';', ':', '!', '?', '\'', '"':
+		// '*', '_' and '~' are emphasis markers wrapped around the URL,
+		// not part of it: "*https://x/a*" otherwise puts the asterisk in
+		// the link target and swallows it so the emphasis never renders.
+		case '.', ',', ';', ':', '!', '?', '\'', '"', '*', '_', '~':
 			url = url[:len(url)-1]
 			continue
 		case ')':
@@ -246,6 +249,50 @@ func inlinePlaceholder(idx, reserve int) string {
 	return "\x1f" + body + "\x1f"
 }
 
+// codeSpanRanges returns the byte ranges of every backtick code span on
+// line, delimiters included. A run of N backticks opens a span that only a
+// run of exactly N closes, per CommonMark; an unclosed run is literal text
+// and opens nothing. A URL inside a span is a command the reader copies —
+// rewriting it as scheme-stripped, link-coloured display text breaks the
+// copy, and the styled replacement's reset ends the span's own styling for
+// whatever follows.
+func codeSpanRanges(line string) [][2]int {
+	var ranges [][2]int
+	i := 0
+	for i < len(line) {
+		if line[i] != '`' {
+			i++
+			continue
+		}
+		start := i
+		for i < len(line) && line[i] == '`' {
+			i++
+		}
+		want := i - start
+		j, closed := i, false
+		for j < len(line) {
+			if line[j] != '`' {
+				j++
+				continue
+			}
+			runStart := j
+			for j < len(line) && line[j] == '`' {
+				j++
+			}
+			if j-runStart == want {
+				ranges = append(ranges, [2]int{start, j})
+				closed = true
+				break
+			}
+		}
+		if !closed {
+			break // unclosed run: nothing after it is a span either
+		}
+		i = j
+	}
+	return ranges
+}
+
 // stashInlineURLs replaces each bare URL inside line with a reserved-width
 // placeholder, appending the URLs to *urls. URLs that are already markdown
 // syntax — the target of "[label](url)", an "<url>" autolink, or a link
@@ -258,6 +305,15 @@ func stashInlineURLs(line string, urls *[]string, width int) string {
 	if matches == nil {
 		return line
 	}
+	spans := codeSpanRanges(line)
+	inCodeSpan := func(at int) bool {
+		for _, r := range spans {
+			if at >= r[0] && at < r[1] {
+				return true
+			}
+		}
+		return false
+	}
 	var b strings.Builder
 	cursor := 0
 	for _, m := range matches {
@@ -267,6 +323,9 @@ func stashInlineURLs(line string, urls *[]string, width int) string {
 		}
 		if start >= 1 && line[start-1] == '<' {
 			continue // an autolink
+		}
+		if inCodeSpan(start) {
+			continue // verbatim: a command the reader copies
 		}
 		url := trimURLTail(line[start:end])
 		if url == "" {

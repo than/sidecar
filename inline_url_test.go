@@ -197,3 +197,87 @@ func TestOwnLineURLStillFullDisplay(t *testing.T) {
 		t.Errorf("own-line URL should keep its scheme:\n%s", visibleText(out))
 	}
 }
+
+// A backtick code span is a command the reader copies. Rewriting the URL
+// inside one as scheme-stripped link-coloured text breaks the copy, and the
+// styled replacement's reset terminates the span's own styling partway.
+func TestInlineURLInCodeSpanUntouched(t *testing.T) {
+	for name, src := range map[string]string{
+		"single tick": "- run `curl https://example.test/a` and check\n",
+		"double tick": "- run ``curl https://example.test/a`` and check\n",
+		"two spans":   "- `https://example.test/a` then `https://example.test/b`\n",
+	} {
+		out, err := renderMarkdown("## S\n\n"+src, 100, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := oscTargets(out); len(got) != 0 {
+			t.Errorf("%s: URL in a code span was hyperlinked: %v", name, got)
+		}
+		if !strings.Contains(visibleText(out), "https://example.test/a") {
+			t.Errorf("%s: code span lost the literal URL:\n%s", name, visibleText(out))
+		}
+	}
+	// Text outside the span still gets linked.
+	out, _ := renderMarkdown("## S\n\n- `curl https://example.test/a` see https://example.test/b\n", 100, true)
+	if got := oscTargets(out); len(got) != 1 || got[0] != "https://example.test/b" {
+		t.Errorf("targets = %v, want only the URL outside the span", got)
+	}
+}
+
+// Emphasis markers wrap the URL; they are not part of it.
+func TestInlineURLTrimsEmphasisMarkers(t *testing.T) {
+	for name, src := range map[string]string{
+		"italic": "- see *https://example.test/a* now.\n",
+		"bold":   "- see **https://example.test/a** now.\n",
+		"strike": "- see ~~https://example.test/a~~ now.\n",
+	} {
+		out, err := renderMarkdown("## S\n\n"+src, 100, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := oscTargets(out)
+		if len(got) != 1 || got[0] != "https://example.test/a" {
+			t.Errorf("%s: targets = %v, want the URL without its emphasis markers", name, got)
+		}
+	}
+}
+
+// If an inline placeholder ever survives restore, the blanket \x1f strip
+// leaves its whole padded body on screen — up to a pane's width of "I7xxxx…".
+// The residual sweep has to know the inline shape too.
+func TestResidualSweepCoversInlinePlaceholder(t *testing.T) {
+	for _, tok := range []string{"\x1fU3\x1f", "\x1fI7xxxxxxxxxxxx\x1f", "\x1fI0\x1f"} {
+		if !residualPlaceholder.MatchString(tok) {
+			t.Errorf("residual sweep misses %q", strings.ReplaceAll(tok, "\x1f", "|"))
+		}
+	}
+	if residualPlaceholder.MatchString("\x1fnot a token\x1f") {
+		t.Error("residual sweep matches arbitrary text")
+	}
+}
+
+// The reserve clamp has to hold inside indented blocks, where glamour gives
+// the content less room than the global wrap width.
+func TestInlineURLWidthInvariantWhenIndented(t *testing.T) {
+	long := "https://example.test/" + strings.Repeat("segment/", 12) + "end"
+	cases := map[string]string{
+		"nested x3":  "## S\n\n- a\n  - b\n    - before " + long + " after\n",
+		"nested x5":  "## S\n\n- a\n  - b\n    - c\n      - d\n        - before " + long + " after\n",
+		"blockquote": "## S\n\n> before " + long + " after\n",
+		"bq nested":  "## S\n\n> > before " + long + " after\n",
+	}
+	for _, w := range []int{20, 40, 72} {
+		for name, src := range cases {
+			out, err := renderMarkdown(src, w, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ln := range strings.Split(out, "\n") {
+				if got := xansi.StringWidth(ln); got > w {
+					t.Errorf("%s at width %d: line overflows at %d cells:\n%q", name, w, got, visibleText(ln))
+				}
+			}
+		}
+	}
+}
