@@ -89,6 +89,46 @@ func defaultSections() []Section {
 // that "moved".
 const emptySectionPlaceholder = "nothing yet"
 
+// roleSection finds the configured section that plays the same role as want —
+// one of the built-in defaults. Position carries no meaning: the picker lets
+// the human reorder, rename, re-emoji and delete every section, and an init
+// re-run adopts whatever headings an existing board already has. Indexing
+// sections[0] as "the human's" therefore bakes a false rule into the board of
+// anyone who moved or dropped it.
+//
+// Emoji is the most durable handle — renaming a section is common, changing
+// its emoji is not — with name and hint as fallbacks. ok is false when the
+// role is gone entirely; callers then say nothing rather than pointing the
+// rule at a section that doesn't play the part.
+func roleSection(sections []Section, want Section) (Section, bool) {
+	for _, matches := range []func(Section) bool{
+		func(s Section) bool { return want.Emoji != "" && s.Emoji == want.Emoji },
+		func(s Section) bool { return s.Name == want.Name },
+		func(s Section) bool { return want.Hint != "" && s.Hint == want.Hint },
+	} {
+		for _, s := range sections {
+			if matches(s) {
+				return s, true
+			}
+		}
+	}
+	return Section{}, false
+}
+
+// humanSection, agentSection and progressSection resolve the three roles the
+// entry-style rules and examples refer to by name.
+func humanSection(sections []Section) (Section, bool) {
+	return roleSection(sections, defaultSections()[0])
+}
+
+func agentSection(sections []Section) (Section, bool) {
+	return roleSection(sections, defaultSections()[1])
+}
+
+func progressSection(sections []Section) (Section, bool) {
+	return roleSection(sections, defaultSections()[2])
+}
+
 // entryStyleRules is the shared instruction set that keeps entries
 // status-shaped: the shape of one entry, then which section it belongs in.
 // Both the starter template comment (renderTemplate) and the CLAUDE.md note
@@ -110,10 +150,10 @@ func entryStyleRules(sections []Section, bullet string) string {
 	} {
 		b.WriteString(bullet + r + "\n")
 	}
-	if len(sections) > 0 {
-		b.WriteString("\n`" + sections[0].Header() + "` only holds items where the human is the blocker, and every item there ends with a `Next:` line naming what they do. A finding, a question, or a status names no action")
-		if len(sections) > 1 {
-			b.WriteString(" — it belongs in `" + sections[1].Header() + "` or a later section")
+	if human, ok := humanSection(sections); ok {
+		b.WriteString("\n`" + human.Header() + "` only holds items where the human is the blocker, and every item there ends with a `Next:` line naming what they do. A finding, a question, or a status names no action")
+		if agent, ok := agentSection(sections); ok {
+			b.WriteString(" — it belongs in `" + agent.Header() + "` or a later section")
 		} else {
 			b.WriteString(" — it belongs in a later section")
 		}
@@ -128,19 +168,26 @@ func entryStyleRules(sections []Section, bullet string) string {
 // Abstract rules let both through — 82% of first-section entries surveyed
 // carried no `Next:` line — so the templates ship examples too.
 //
-// The pairs need somewhere to move things to: agent is the queue for unstarted
-// work, prog the section for work underway. With only two sections both
-// collapse onto the second one; with fewer than two there's nowhere to move
-// anything and the rules stand alone.
+// Both pairs move an item out of the human section, so they need that section
+// and somewhere to move to — resolved by role, never by position. Without a
+// human section there's no wrong placement to demonstrate and the example is
+// omitted; when only one destination role survives, both pairs use it.
 func entryStyleExample(sections []Section) string {
-	if len(sections) < 2 {
+	human, ok := humanSection(sections)
+	if !ok {
 		return ""
 	}
-	first, agent := sections[0].Header(), sections[1].Header()
-	prog := agent
-	if len(sections) > 2 {
-		prog = sections[2].Header()
+	agentSec, hasAgent := agentSection(sections)
+	progSec, hasProg := progressSection(sections)
+	switch {
+	case !hasAgent && !hasProg:
+		return ""
+	case !hasAgent:
+		agentSec = progSec
+	case !hasProg:
+		progSec = agentSec
 	}
+	first, agent, prog := human.Header(), agentSec.Header(), progSec.Header()
 	return "Story in the wrong section (wrong):\n\n" +
 		first + "\n" +
 		"- Per-app PRs are owned by their sessions — #259 (Checkout), #239 → #243 (Billing), #256 (Admin, still parked on you creating the \"Admin (Development)\" API key), and the Reports app's store submission. Ask each session for status rather than this queue. Cross-cutting note that outlives them: #239 and #259 both add a vitest suite to the same test:all line, so whichever merges second needs a rebase.\n\n" +

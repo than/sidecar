@@ -21,7 +21,7 @@ usage: sidecar [file.md]         (default: .sidecar/sidecar.md)
        sidecar init [file.md]    create the board, wire it into Claude Code,
                                  and open the viewer on it (a piped or CI run
                                  prints the command instead)
-       sidecar init --yes        skip the section picker
+       sidecar init --yes        skip the picker and don't open the viewer
        sidecar init --no-claude  skip the CLAUDE.md note and reconcile hook
        sidecar init --keep-board point init at a legacy root SIDECAR.md
                                  instead of migrating it (default board only;
@@ -54,15 +54,14 @@ func main() {
 		case "-s", "--static":
 			os.Exit(runStatic(os.Args[2:]))
 		case "init":
-			code, board := runInitBoard(os.Args[2:])
 			// Setting the board up and then telling the human to run another
-			// command is a step for no reason — open it. A non-TTY run (CI, a
-			// pipe) has no viewer to open and exits with the hint instead, and
-			// an empty board means init printed help or bailed.
-			if code != 0 || board == "" || !interactiveTTY() {
+			// command is a step for no reason — open it. runInitBoard decides
+			// whether that's appropriate and hands back a path only when it is.
+			code, open := runInitBoard(os.Args[2:])
+			if code != 0 || open == "" {
 				os.Exit(code)
 			}
-			os.Exit(runViewer(board, false))
+			os.Exit(runViewer(open, false))
 		case "diff":
 			os.Exit(runDiff(os.Args[2:]))
 		}

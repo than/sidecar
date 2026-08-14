@@ -12,12 +12,6 @@ import (
 	"golang.org/x/term"
 )
 
-// runInit is the int-only form every caller but main() uses.
-func runInit(args []string) int {
-	code, _ := runInitBoard(args)
-	return code
-}
-
 // runInitBoard scaffolds the target file and wires it into Claude Code. Every
 // recommended default applies without asking: a legacy root SIDECAR.md is
 // migrated, the board's home is git-excluded, and a CLAUDE.md note plus
@@ -26,10 +20,12 @@ func runInit(args []string) int {
 // interactive section picker that otherwise runs when a brand-new board is
 // created from a terminal.
 //
-// code is a process exit code. board is the absolute path of the board that
-// was set up, empty when init printed help or bailed before settling on one —
-// main() opens the viewer on it, so an empty board means "don't launch".
-func runInitBoard(args []string) (code int, board string) {
+// code is a process exit code. open is the absolute path of a board to open
+// the viewer on, empty when init shouldn't open one — help, an error, a
+// non-TTY run with no viewer to show, or --yes, which is the switch for
+// scripts that need init to return rather than block in the alt screen. All
+// the launch policy lives here so main() only has to check for a path.
+func runInitBoard(args []string) (code int, open string) {
 	assumeYes := false
 	noClaude := false
 	keepBoard := false
@@ -188,18 +184,27 @@ func runInitBoard(args []string) (code int, board string) {
 		writeReconcileHook(root, rel, sections)
 	}
 
-	// Interactive runs open the viewer straight away (main() does the
-	// launching), so the "Watch it:" hint would just be telling the human to
-	// do what's already happening. Piped and CI runs get the hint instead —
-	// they have no TUI to open.
-	if interactiveTTY() {
-		fmt.Println("\nOpening sidecar\u2026")
-	} else if isDefaultTarget {
+	// A terminal run opens the viewer straight away, so the "Watch it:" hint
+	// would just name the command that's already running. Everything else —
+	// piped, CI, or --yes — gets the hint, because nothing is about to open.
+	if shouldOpenViewer(interactiveTTY(), assumeYes) {
+		return 0, abs
+	}
+	if isDefaultTarget {
 		fmt.Println("\nWatch it:  sidecar")
 	} else {
 		fmt.Printf("\nWatch it:  sidecar %s\n", target)
 	}
-	return 0, abs
+	return 0, ""
+}
+
+// shouldOpenViewer decides whether `sidecar init` follows through into the
+// viewer. --yes is the contract for scripts and CI that need init to return
+// instead of blocking in the alt screen, so it suppresses the launch even from
+// a terminal — a wrapper running init under a pty would otherwise hang until
+// someone pressed q.
+func shouldOpenViewer(interactive, assumeYes bool) bool {
+	return interactive && !assumeYes
 }
 
 // sectionsFromBoard derives Section values from an existing board's own "## "

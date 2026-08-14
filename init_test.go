@@ -9,6 +9,13 @@ import (
 	"testing"
 )
 
+// runInit is the int-only form these tests use — main() is the only
+// production caller and it needs the path runInitBoard returns.
+func runInit(args []string) int {
+	code, _ := runInitBoard(args)
+	return code
+}
+
 func mustRun(t *testing.T, dir string, name string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(name, args...)
@@ -546,14 +553,39 @@ func TestClaudeNoteWritingRules(t *testing.T) {
 // The note names the first configured section in its placement rule, so a
 // custom section set must not leave the rule pointing at the built-in "🧠
 // Needs action".
-func TestClaudeNotePlacementRuleUsesFirstSection(t *testing.T) {
-	custom := []Section{{"", "Todo", "the human acts"}, {"", "Doing", "in flight"}}
-	note := claudeNote("board.md", custom)
-	if !strings.Contains(note, "`## Todo`") {
-		t.Errorf("placement rule doesn't name the first section:\n%s", note)
+// The placement rule is about the human-blocker section specifically, so it
+// has to follow that section rather than whatever sits at index 0. The picker
+// reorders, renames, re-emojis and deletes sections; position carries no role.
+func TestClaudeNotePlacementRuleFollowsTheRole(t *testing.T) {
+	// Reordered and renamed, but 🧠 is still there: the rule names it, at its
+	// new heading, not the section that now happens to be first.
+	moved := []Section{
+		{"🚧", "In progress", "actively being worked"},
+		{"🧠", "For me", "the human is the blocker"},
+		{"🤖", "Queue", "queued for an agent, not started"},
 	}
-	if strings.Contains(note, "🧠 Needs action") {
-		t.Errorf("note hardcodes the default first section:\n%s", note)
+	note := claudeNote("board.md", moved)
+	if !strings.Contains(note, "`## 🧠 For me` only holds items") {
+		t.Errorf("rule doesn't follow the renamed 🧠 section:\n%s", note)
+	}
+	if strings.Contains(note, "`## 🚧 In progress` only holds items") {
+		t.Errorf("rule attached to whatever is first:\n%s", note)
+	}
+
+	// The human dropped the human section entirely. Saying nothing is right;
+	// asserting that some other section holds their blockers is not.
+	dropped := []Section{{"", "Todo", "stuff"}, {"", "Doing", "in flight"}}
+	note = claudeNote("board.md", dropped)
+	if strings.Contains(note, "only holds items where the human is the blocker") {
+		t.Errorf("placement rule emitted with no human section:\n%s", note)
+	}
+	if strings.Contains(note, "Split by who acts") {
+		t.Errorf("worked example emitted with no human section:\n%s", note)
+	}
+	for _, leak := range []string{"🧠", "Needs you"} {
+		if strings.Contains(note, leak) {
+			t.Errorf("note leaked default section %q into a custom set:\n%s", leak, note)
+		}
 	}
 }
 
@@ -1142,43 +1174,62 @@ func TestRunInitYesCustomPathSkipsExcludePrompt(t *testing.T) {
 	}
 }
 
-// main() opens the viewer on whatever init just set up, so runInitBoard has to
-// hand back the board's absolute path. An empty path is the signal not to
-// launch — help and flag errors must return one.
-func TestRunInitBoardReturnsBoardPath(t *testing.T) {
+// --yes is the "don't be interactive" switch, so it must suppress the viewer
+// launch even from a terminal. A wrapper running `sidecar init --yes` under a
+// pty would otherwise block in the alt screen until someone pressed q.
+func TestShouldOpenViewer(t *testing.T) {
+	cases := []struct {
+		interactive, assumeYes, want bool
+	}{
+		{true, false, true},   // bare `sidecar init` from a terminal
+		{true, true, false},   // --yes keeps its non-interactive contract
+		{false, false, false}, // piped or CI: no viewer to open
+		{false, true, false},
+	}
+	for _, c := range cases {
+		if got := shouldOpenViewer(c.interactive, c.assumeYes); got != c.want {
+			t.Errorf("shouldOpenViewer(interactive=%v, assumeYes=%v) = %v, want %v",
+				c.interactive, c.assumeYes, got, c.want)
+		}
+	}
+}
+
+// runInitBoard hands main() a path only when it should launch. Help, a flag
+// error, and --yes all return empty while still doing (or correctly skipping)
+// the setup work.
+func TestRunInitBoardOpenPath(t *testing.T) {
 	dir := t.TempDir()
 	mustRun(t, dir, "git", "init", "-q")
 	withWorkDir(t, dir, func() {
 		var code int
-		var board string
-		captureStdout(t, func() {
-			code, board = runInitBoard([]string{"--yes", "--no-claude"})
+		var open string
+		out := captureStdout(t, func() {
+			code, open = runInitBoard([]string{"--yes", "--no-claude"})
 		})
 		if code != 0 {
 			t.Fatalf("init exit = %d, want 0", code)
 		}
-		want, err := filepath.Abs(filepath.Join(sidecarDirName, "sidecar.md"))
-		if err != nil {
-			t.Fatal(err)
+		if open != "" {
+			t.Errorf("--yes returned %q, want empty so main doesn't launch", open)
 		}
-		if board != want {
-			t.Errorf("board = %q, want %q", board, want)
+		if !strings.Contains(out, "Watch it:") {
+			t.Errorf("a non-launching run must print the hint instead:\n%s", out)
 		}
-		if _, err := os.Stat(board); err != nil {
-			t.Errorf("returned board doesn't exist: %v", err)
+		if _, err := os.Stat(filepath.Join(sidecarDirName, "sidecar.md")); err != nil {
+			t.Errorf("board not created: %v", err)
 		}
 
 		captureStdout(t, func() {
-			code, board = runInitBoard([]string{"-h"})
+			code, open = runInitBoard([]string{"-h"})
 		})
-		if code != 0 || board != "" {
-			t.Errorf("help returned (%d, %q), want (0, \"\") so main doesn't launch", code, board)
+		if code != 0 || open != "" {
+			t.Errorf("help returned (%d, %q), want (0, \"\")", code, open)
 		}
 		captureStderr(t, func() {
-			code, board = runInitBoard([]string{"--bogus"})
+			code, open = runInitBoard([]string{"--bogus"})
 		})
-		if code != 2 || board != "" {
-			t.Errorf("unknown flag returned (%d, %q), want (2, \"\")", code, board)
+		if code != 2 || open != "" {
+			t.Errorf("unknown flag returned (%d, %q), want (2, \"\")", code, open)
 		}
 	})
 }
