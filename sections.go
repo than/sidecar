@@ -134,9 +134,9 @@ func progressSection(sections []Section) (Section, bool) {
 // Both the starter template comment (renderTemplate) and the CLAUDE.md note
 // (claudeNote) render it, so the rules can't drift apart — whoever writes an
 // entry has the board file open, and CLAUDE.md may not be in context at all.
-// bullet is the caller's list marker. The placement rule names the first
-// configured section, so a custom set never points at a heading the board
-// doesn't have.
+// bullet is the caller's list marker. The placement rule names sections by
+// role rather than by position, and says nothing when a role is absent, so it
+// never points at a heading the board doesn't have or mislabels one it does.
 func entryStyleRules(sections []Section, bullet string) string {
 	var b strings.Builder
 	b.WriteString("Write entries in Apple Developer documentation voice: declarative, front-loaded verb, present tense, one fact per sentence. State where things stand, not how they got there — no dates, no \"asked\", no \"then we decided\".\n\n")
@@ -170,8 +170,9 @@ func entryStyleRules(sections []Section, bullet string) string {
 //
 // Both pairs move an item out of the human section, so they need that section
 // and somewhere to move to — resolved by role, never by position. Without a
-// human section there's no wrong placement to demonstrate and the example is
-// omitted; when only one destination role survives, both pairs use it.
+// human section there's no wrong placement to demonstrate and nothing is
+// emitted; each pair is then dropped independently if its own destination
+// role is missing.
 func entryStyleExample(sections []Section) string {
 	human, ok := humanSection(sections)
 	if !ok {
@@ -179,16 +180,16 @@ func entryStyleExample(sections []Section) string {
 	}
 	agentSec, hasAgent := agentSection(sections)
 	progSec, hasProg := progressSection(sections)
-	switch {
-	case !hasAgent && !hasProg:
-		return ""
-	case !hasAgent:
-		agentSec = progSec
-	case !hasProg:
-		progSec = agentSec
+	if !hasProg {
+		// The first pair's "right" side is work genuinely under way, so the
+		// agent queue is a fair stand-in when there's no in-progress section.
+		progSec, hasProg = agentSec, hasAgent
 	}
-	first, agent, prog := human.Header(), agentSec.Header(), progSec.Header()
-	return "Story in the wrong section (wrong):\n\n" +
+	if !hasProg {
+		return ""
+	}
+	first, prog := human.Header(), progSec.Header()
+	out := "Story in the wrong section (wrong):\n\n" +
 		first + "\n" +
 		"- Per-app PRs are owned by their sessions — #259 (Checkout), #239 → #243 (Billing), #256 (Admin, still parked on you creating the \"Admin (Development)\" API key), and the Reports app's store submission. Ask each session for status rather than this queue. Cross-cutting note that outlives them: #239 and #259 both add a vitest suite to the same test:all line, so whichever merges second needs a rebase.\n\n" +
 		"Split by who acts (right):\n\n" +
@@ -197,13 +198,25 @@ func entryStyleExample(sections []Section) string {
 		"  https://github.com/o/r/pull/256\n" +
 		"  Next: Create the key in the provider dashboard.\n\n" +
 		prog + "\n" +
-		"- Per-app PRs run in their own sessions: #259, #243, #256, plus the Reports app's store submission. Ask each session for status.\n" +
-		"- #239 and #259 both add a vitest suite to the same `test:all` line — whichever merges second rebases.\n\n" +
+		// #256 is deliberately absent here: it's already listed above as the
+		// human's blocked item, and an example that files one item under two
+		// headings undercuts "move each item to the section matching its state".
+		"- Per-app PRs run in their own sessions: #259 and #243, plus the Reports app's store submission. Ask each session for status.\n" +
+		"- #239 and #259 both add a vitest suite to the same `test:all` line — whichever merges second rebases.\n"
+	// The queue pair's whole lesson is where unstarted work goes. With no
+	// agent-queue section there's nowhere correct to point it — retargeting it
+	// at the in-progress section would teach filing unstarted work as in
+	// progress, the exact failure it exists to prevent. Drop it; the first pair
+	// still carries the placement lesson.
+	if !hasAgent {
+		return out
+	}
+	return out + "\n" +
 		"No action named (wrong):\n\n" +
 		first + "\n" +
 		"- #440 — the Ohio return may be filing only the local increment where the other states layer state and local separately. Largest open question.\n\n" +
 		"Queue the work instead (right):\n\n" +
-		agent + "\n" +
+		agentSec.Header() + "\n" +
 		"- #440 — check whether the Ohio return files only the local increment where the other states layer state and local separately.\n" +
 		"  https://github.com/o/r/issues/440\n"
 }

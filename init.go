@@ -49,7 +49,8 @@ func runInitBoard(args []string) (code int, open string) {
 			fmt.Println("                 init at it, instead of migrating to .sidecar/")
 			fmt.Println("                 (default board only — ignored with a custom path;")
 			fmt.Println("                 no-op when .sidecar/sidecar.md already exists)")
-			fmt.Println("  --yes, -y      skip the section picker on a brand-new board")
+			fmt.Println("  --yes, -y      skip the section picker on a brand-new board, and")
+			fmt.Println("                 return instead of opening the viewer")
 			return 0, ""
 		default:
 			if strings.HasPrefix(a, "-") {
@@ -230,6 +231,18 @@ func sectionsFromBoard(raw string) ([]Section, bool) {
 	for i, s := range b.Sections {
 		sec := sectionFromLabel(s.Label)
 		sec.Hint = knownHints[s.Label]
+		if sec.Hint == "" {
+			// The label map misses a section that was renamed between
+			// template versions — a board predating "🧠 Needs you" still
+			// says "🧠 Needs action" — and dropping the hint for that one
+			// section while its siblings keep theirs is exactly what the map
+			// exists to prevent. roleSection matches it by emoji, so the
+			// hint survives the rename. A genuinely custom heading matches
+			// nothing and stays hintless, as it should.
+			if def, ok := roleSection(defaultSections(), sec); ok {
+				sec.Hint = def.Hint
+			}
+		}
 		sections[i] = sec
 	}
 	return sections, true

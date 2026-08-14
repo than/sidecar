@@ -148,3 +148,33 @@ func TestRenderTemplateCustomNoHint(t *testing.T) {
 		t.Errorf("hintless section should have no '= meaning' line:\n%s", out)
 	}
 }
+
+// The second worked pair exists to show where queued work goes. On a board
+// with no agent-queue section — every board that predates this template — it
+// used to retarget onto the in-progress section, teaching "file unstarted work
+// under In progress": the exact failure the pair was written to prevent. Drop
+// the pair instead; the first one still carries the placement lesson.
+func TestEntryStyleExampleDropsQueuePairWithoutAgentSection(t *testing.T) {
+	legacy := []Section{
+		{"🧠", "Needs action", "surfaced for the human to act on"},
+		{"🚧", "In progress", "actively being worked"},
+		{"🚘", "Parked", "deferred, not dropped"},
+		{"✅", "Done", "merged, not yet released"},
+		{"📦", "Shipped", "released (tag the version)"},
+	}
+	got := entryStyleExample(legacy)
+	if !strings.Contains(got, "Split by who acts (right)") {
+		t.Errorf("first pair should survive:\n%s", got)
+	}
+	if strings.Contains(got, "No action named (wrong)") || strings.Contains(got, "Queue the work instead") {
+		t.Errorf("queue pair emitted with no agent section:\n%s", got)
+	}
+	if strings.Contains(got, "#440") {
+		t.Errorf("queue pair's item leaked without its section:\n%s", got)
+	}
+	// With 🤖 present the pair comes back, pointed at it.
+	full := entryStyleExample(defaultSections())
+	if !strings.Contains(full, "Queue the work instead (right):\n\n## 🤖 Agent queue\n") {
+		t.Errorf("queue pair missing or misdirected with 🤖 present:\n%s", full)
+	}
+}

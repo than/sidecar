@@ -1233,3 +1233,26 @@ func TestRunInitBoardOpenPath(t *testing.T) {
 		}
 	})
 }
+
+// Renaming 🧠 Needs action to 🧠 Needs you means an existing board's heading no
+// longer matches the label-keyed hint map, so init re-runs would emit that one
+// section with no "— meaning" while its siblings kept theirs. The role lookup
+// matches it by emoji, so the hint survives the rename.
+func TestSectionsFromBoardRecoversHintAcrossRename(t *testing.T) {
+	legacy := "# Sidecar\n\n## 🧠 Needs action\n\n- x\n\n## 🚧 In progress\n\n- y\n"
+	got, ok := sectionsFromBoard(legacy)
+	if !ok {
+		t.Fatal("sectionsFromBoard rejected a legacy board")
+	}
+	if got[0].Hint != defaultSections()[0].Hint {
+		t.Errorf("renamed section lost its hint: got %q, want %q", got[0].Hint, defaultSections()[0].Hint)
+	}
+	if got[1].Hint == "" {
+		t.Errorf("unrenamed section lost its hint: %+v", got[1])
+	}
+	// A genuinely custom section must still come back hintless.
+	custom, _ := sectionsFromBoard("## Todo\n\n- x\n")
+	if custom[0].Hint != "" {
+		t.Errorf("custom section invented a hint: %q", custom[0].Hint)
+	}
+}
