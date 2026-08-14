@@ -1174,22 +1174,28 @@ func TestRunInitYesCustomPathSkipsExcludePrompt(t *testing.T) {
 	}
 }
 
-// --yes is the "don't be interactive" switch, so it must suppress the viewer
-// launch even from a terminal. A wrapper running `sidecar init --yes` under a
-// pty would otherwise block in the alt screen until someone pressed q.
+// Two things suppress the viewer launch. --yes is the "don't be interactive"
+// switch — a wrapper running `sidecar init --yes` under a pty would otherwise
+// block in the alt screen until someone pressed q. And a run that printed an
+// instruction keeps the shell, because the alt screen hides that instruction
+// until the human quits.
 func TestShouldOpenViewer(t *testing.T) {
 	cases := []struct {
-		interactive, assumeYes, want bool
+		interactive, assumeYes, needsAttention, want bool
 	}{
-		{true, false, true},   // bare `sidecar init` from a terminal
-		{true, true, false},   // --yes keeps its non-interactive contract
-		{false, false, false}, // piped or CI: no viewer to open
-		{false, true, false},
+		{true, false, false, true},   // bare `sidecar init` from a terminal
+		{true, true, false, false},   // --yes keeps its non-interactive contract
+		{false, false, false, false}, // piped or CI: no viewer to open
+		{false, true, false, false},
+		// init printed something to act on — the alt screen would bury it
+		// until the human quit, so stay in the shell and print the hint.
+		{true, false, true, false},
+		{true, true, true, false},
 	}
 	for _, c := range cases {
-		if got := shouldOpenViewer(c.interactive, c.assumeYes); got != c.want {
-			t.Errorf("shouldOpenViewer(interactive=%v, assumeYes=%v) = %v, want %v",
-				c.interactive, c.assumeYes, got, c.want)
+		if got := shouldOpenViewer(c.interactive, c.assumeYes, c.needsAttention); got != c.want {
+			t.Errorf("shouldOpenViewer(interactive=%v, assumeYes=%v, needsAttention=%v) = %v, want %v",
+				c.interactive, c.assumeYes, c.needsAttention, got, c.want)
 		}
 	}
 }
@@ -1255,4 +1261,46 @@ func TestSectionsFromBoardRecoversHintAcrossRename(t *testing.T) {
 	if custom[0].Hint != "" {
 		t.Errorf("custom section invented a hint: %q", custom[0].Hint)
 	}
+}
+
+// The launch decision is only as good as the reporting behind it: each writer
+// has to say when it left the human an instruction rather than just printing
+// one and returning.
+func TestWritersReportNeedsAttention(t *testing.T) {
+	t.Run("hook on invalid JSON", func(t *testing.T) {
+		root := t.TempDir()
+		os.MkdirAll(filepath.Join(root, ".claude"), 0o755)
+		os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte("{not json"), 0o644)
+		var got bool
+		captureStdout(t, func() { got = writeReconcileHook(root, "SIDECAR.md", defaultSections()) })
+		if !got {
+			t.Error("printed a paste-this snippet but reported nothing to attend to")
+		}
+	})
+	t.Run("hook on a clean write", func(t *testing.T) {
+		root := t.TempDir()
+		var got bool
+		captureStdout(t, func() { got = writeReconcileHook(root, "SIDECAR.md", defaultSections()) })
+		if got {
+			t.Error("a successful write must not hold back the viewer")
+		}
+	})
+	t.Run("note with an unclosed marker", func(t *testing.T) {
+		root := t.TempDir()
+		os.WriteFile(filepath.Join(root, "CLAUDE.md"),
+			[]byte("# P\n\n<!-- "+claudeNoteMarker+" -->\nstranded\n"), 0o644)
+		var got bool
+		captureStdout(t, func() { got = writeClaudeNote(root, "SIDECAR.md", defaultSections()) })
+		if !got {
+			t.Error("told the human to fix it by hand but reported nothing to attend to")
+		}
+	})
+	t.Run("note on a clean append", func(t *testing.T) {
+		root := t.TempDir()
+		var got bool
+		captureStdout(t, func() { got = writeClaudeNote(root, "SIDECAR.md", defaultSections()) })
+		if got {
+			t.Error("a successful append must not hold back the viewer")
+		}
+	})
 }
