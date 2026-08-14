@@ -293,7 +293,11 @@ func claudeNote(rel string, sections []Section) string {
 		"%[2]s" +
 		"\n%[3]s" +
 		"%[4]s" +
-		"\nIf sidecar isn't installed: `go install github.com/than/sidecar@latest`,\n" +
+		"\nThe board is a private channel between you and the human. Never mention\n" +
+		"it, its path, or sidecar itself in commit messages, PR titles or bodies,\n" +
+		"issue comments, or any other shared artifact — those readers don't have\n" +
+		"the board and the reference means nothing to them.\n\n" +
+		"If sidecar isn't installed: `go install github.com/than/sidecar@latest`,\n" +
 		"or a prebuilt binary from https://github.com/than/sidecar/releases/latest\n" +
 		"<!-- /sidecar:review-queue -->\n"
 	return fmt.Sprintf(tmpl, rel, secLines.String(), entryStyleRules(sections, "- "), example)

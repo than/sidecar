@@ -534,7 +534,9 @@ func TestClaudeNoteWritingRules(t *testing.T) {
 	// Abstract rules alone let agents write status-as-story and file it under
 	// the human-action section. The note carries the placement rule and one
 	// worked wrong→right pair.
-	for _, want := range []string{"where things stand, not how they got there", "only holds items where the human is the blocker", "Split by who acts (right)"} {
+	// Agents were citing the board and sidecar itself in PR bodies and commit
+	// messages, where the reader has neither.
+	for _, want := range []string{"where things stand, not how they got there", "only holds items where the human is the blocker", "Split by who acts (right)", "private channel between you and the human", "any other shared artifact"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note missing %q", want)
 		}
