@@ -19,8 +19,9 @@ const help = `sidecar — live-updating markdown viewer for a terminal side pane
 
 usage: sidecar [file.md]         (default: .sidecar/sidecar.md)
        sidecar init [file.md]    create the board, wire it into Claude Code,
-                                 and open it
-       sidecar init --yes        skip the section picker (stays non-blocking)
+                                 and open the viewer on it (a piped or CI run
+                                 prints the command instead)
+       sidecar init --yes        skip the section picker
        sidecar init --no-claude  skip the CLAUDE.md note and reconcile hook
        sidecar init --keep-board point init at a legacy root SIDECAR.md
                                  instead of migrating it (default board only;
