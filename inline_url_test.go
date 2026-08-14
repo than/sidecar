@@ -4,6 +4,7 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -78,6 +79,49 @@ func TestInlineURLKeepsWidthInvariant(t *testing.T) {
 			if got := xansi.StringWidth(ln); got > w {
 				t.Errorf("width %d: line overflows pane at %d cells:\n%q", w, got, visibleText(ln))
 			}
+		}
+		assertLinkSurvived(t, out, fmt.Sprintf("width %d", w))
+	}
+}
+
+// A width assertion alone passes vacuously if the placeholder was broken and
+// swept away: the URL is gone, so of course the line fits. Every width case
+// has to prove the link came back — and that no padded residue reached the
+// screen, which renderMarkdown's own comment calls the louder failure.
+func assertLinkSurvived(t *testing.T, out, ctx string) {
+	t.Helper()
+	if len(oscTargets(out)) == 0 {
+		t.Errorf("%s: URL vanished instead of rendering as a link:\n%s", ctx, visibleText(out))
+	}
+	if m := residueFind.FindString(visibleText(out)); m != "" {
+		t.Errorf("%s: placeholder residue %q reached the screen:\n%s", ctx, m, visibleText(out))
+	}
+}
+
+var residueFind = regexp.MustCompile(`I\d+x{2,}`)
+
+// A URL glued to a prefix is one wrap word, so the affix has to come out of
+// the reserve too — otherwise "Source:https://…" pushes the token past the
+// clamp and the line hangs over the pane edge.
+func TestInlineURLGluedAffixKeepsWidth(t *testing.T) {
+	long := "https://example.test/" + strings.Repeat("segment/", 6) + "end"
+	cases := map[string]string{
+		"glued prefix":      "## S\n\n- before Source:" + long + " after\n",
+		"long glued prefix": "## S\n\n- before PR-301-reference:" + long + " after\n",
+		"glued suffix":      "## S\n\n- before " + long + "|trailing after\n",
+	}
+	for _, w := range []int{20, 30, 40, 72} {
+		for name, src := range cases {
+			out, err := renderMarkdown(src, w, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ln := range strings.Split(out, "\n") {
+				if got := xansi.StringWidth(ln); got > w {
+					t.Errorf("%s at width %d: overflows at %d cells:\n%q", name, w, got, visibleText(ln))
+				}
+			}
+			assertLinkSurvived(t, out, fmt.Sprintf("%s at width %d", name, w))
 		}
 	}
 }
@@ -281,6 +325,7 @@ func TestInlineURLWidthInvariantWhenIndented(t *testing.T) {
 					t.Errorf("%s at width %d: line overflows at %d cells:\n%q", name, w, got, visibleText(ln))
 				}
 			}
+			assertLinkSurvived(t, out, fmt.Sprintf("%s at width %d", name, w))
 		}
 	}
 }

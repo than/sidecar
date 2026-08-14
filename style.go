@@ -251,6 +251,27 @@ func inlinePlaceholder(idx, reserve int) string {
 	return "\x1f" + body + "\x1f"
 }
 
+// isSpaceByte reports whether c separates words for wrapping purposes.
+func isSpaceByte(c byte) bool {
+	return c == ' ' || c == '\t'
+}
+
+// indentWidth is how many cells a line's leading whitespace occupies. A tab
+// measures zero under StringWidth but advances to the next 4-cell stop on
+// screen, so counting it as such is what keeps a tab-indented continuation
+// line's reserve honest.
+func indentWidth(line string) int {
+	w := 0
+	for _, c := range leadingIndent(line) {
+		if c == '\t' {
+			w += 4 - w%4
+			continue
+		}
+		w++
+	}
+	return w
+}
+
 // codeSpanRanges returns the byte ranges of every backtick code span on
 // line, delimiters included. A run of N backticks opens a span that only a
 // run of exactly N closes, per CommonMark; an unclosed run is literal text
@@ -356,7 +377,21 @@ func stashInlineURLs(line string, urls *[]string, width int) string {
 		cursor = start + len(url)
 		idx := len(*urls)
 		*urls = append(*urls, url)
-		b.WriteString(inlinePlaceholder(idx, inlineReserve(inlineDisplay(url), width-visibleWidth(leadingIndent(line)))))
+		// The wrap unit is the whole space-delimited word, not the URL:
+		// "Source:https://…" is one word, so anything glued to either end
+		// has to come out of the reserve or the token pushes the line past
+		// the pane edge.
+		wordStart := start
+		for wordStart > 0 && !isSpaceByte(line[wordStart-1]) {
+			wordStart--
+		}
+		wordEnd := start + len(url)
+		for wordEnd < len(line) && !isSpaceByte(line[wordEnd]) {
+			wordEnd++
+		}
+		affix := visibleWidth(line[wordStart:start]) + visibleWidth(line[start+len(url):wordEnd])
+		room := width - indentWidth(line) - affix
+		b.WriteString(inlinePlaceholder(idx, inlineReserve(inlineDisplay(url), room)))
 	}
 	if cursor == 0 {
 		return line
