@@ -19,7 +19,7 @@ Run Sidecar beside your Claude Code session in a split terminal. Claude edits `.
 
 | Claude Code | sidecar `.sidecar/sidecar.md` |
 | --- | --- |
-| edits `.sidecar/sidecar.md`,<br>transcript scrolls | 🧠 Needs action<br>🚧 In progress<br>🚘 Parked<br>✅ Done<br>📦 Shipped |
+| edits `.sidecar/sidecar.md`,<br>transcript scrolls | 🧠 Needs you<br>🤖 Agent queue<br>🚧 In progress<br>🚘 Parked<br>✅ Done<br>📦 Shipped |
 
 Any split-pane setup works — [Supacode], tmux, or your terminal’s built-in splits (Ghostty, iTerm2, WezTerm). To keep the queue current, use the `UserPromptSubmit` hook that `sidecar init` installs by default. It reminds Claude to update the file each turn, so the view stays fresh. For details, see [Connect it to Claude Code](#connect-it-to-claude-code).
 
@@ -29,7 +29,7 @@ Any split-pane setup works — [Supacode], tmux, or your terminal’s built-in s
 
 `sidecar init` creates a starter `.sidecar/sidecar.md` and wires it into Claude Code — no questions asked. Every recommended default applies: its home is excluded from git automatically (appended to `.git/info/exclude`, uncommitted, applying in every worktree, because a personal scratchpad usually shouldn’t be tracked), a note goes into `CLAUDE.md`, and a per-turn `UserPromptSubmit` reconcile hook merges into `.claude/settings.json` so Claude Code keeps the queue current and knows how to install and launch Sidecar. Running `sidecar init` again upgrades an earlier setup in place. If a root-level `SIDECAR.md` from an older Sidecar exists, it’s migrated into `.sidecar/sidecar.md` for you, silently.
 
-Two flags opt out of a default: `--no-claude` skips the `CLAUDE.md` note and reconcile hook; `--keep-board` leaves a legacy root `SIDECAR.md` where it is and points `init` at it directly, instead of migrating to `.sidecar/` (a no-op when `.sidecar/sidecar.md` already exists). `--yes`/`-y` skip the section picker described next — accepted for scripts and muscle memory that want a guaranteed non-interactive run. Creating a brand-new board from an interactive terminal still opens a short picker for choosing its sections; pass a custom path (`sidecar init notes.md`) to place the board somewhere other than `.sidecar/sidecar.md`, which still gets the same automatic exclude, note, and hook.
+Two flags opt out of a default: `--no-claude` skips the `CLAUDE.md` note and reconcile hook; `--keep-board` leaves a legacy root `SIDECAR.md` where it is and points `init` at it directly, instead of migrating to `.sidecar/` (a no-op when `.sidecar/sidecar.md` already exists). `--yes`/`-y` skip the section picker described next, and keep `init` non-interactive end to end: from a terminal, a bare `sidecar init` opens the viewer on the board it just created, while `--yes` returns to the shell for scripts and muscle memory that need it to. Creating a brand-new board from an interactive terminal still opens a short picker for choosing its sections; pass a custom path (`sidecar init notes.md`) to place the board somewhere other than `.sidecar/sidecar.md`, which still gets the same automatic exclude, note, and hook.
 
 ## What it does
 

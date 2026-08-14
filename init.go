@@ -12,14 +12,25 @@ import (
 	"golang.org/x/term"
 )
 
-// runInit scaffolds the target file and wires it into Claude Code. Every
+// runInitBoard scaffolds the target file and wires it into Claude Code. Every
 // recommended default applies without asking: a legacy root SIDECAR.md is
 // migrated, the board's home is git-excluded, and a CLAUDE.md note plus
 // reconcile hook are written. --no-claude and --keep-board opt out of the
 // Claude Code wiring and the migration, respectively. --yes/-y skip the
 // interactive section picker that otherwise runs when a brand-new board is
-// created from a terminal. Returns a process exit code.
-func runInit(args []string) int {
+// created from a terminal.
+//
+// code is a process exit code. open is the absolute path of a board to open
+// the viewer on, empty when init shouldn't open one — help, an error, a
+// non-TTY run with no viewer to show, or --yes, which is the switch for
+// scripts that need init to return rather than block in the alt screen. All
+// the launch policy lives here so main() only has to check for a path.
+func runInitBoard(args []string) (code int, open string) {
+	// Set whenever init prints something the human has to act on. Opening the
+	// viewer scrolls the primary buffer away, so those messages would arrive
+	// only after they quit — too late for a copy-paste instruction. init keeps
+	// the shell in that case and falls back to the "Watch it:" hint.
+	needsAttention := false
 	assumeYes := false
 	noClaude := false
 	keepBoard := false
@@ -43,12 +54,13 @@ func runInit(args []string) int {
 			fmt.Println("                 init at it, instead of migrating to .sidecar/")
 			fmt.Println("                 (default board only — ignored with a custom path;")
 			fmt.Println("                 no-op when .sidecar/sidecar.md already exists)")
-			fmt.Println("  --yes, -y      skip the section picker on a brand-new board")
-			return 0
+			fmt.Println("  --yes, -y      skip the section picker on a brand-new board, and")
+			fmt.Println("                 return instead of opening the viewer")
+			return 0, ""
 		default:
 			if strings.HasPrefix(a, "-") {
 				fmt.Fprintf(os.Stderr, "sidecar init: unknown flag %q\n", a)
-				return 2
+				return 2, ""
 			}
 			rest = append(rest, a)
 		}
@@ -63,7 +75,7 @@ func runInit(args []string) int {
 	abs, err := filepath.Abs(expandTilde(target))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
-		return 1
+		return 1, ""
 	}
 
 	migrated := false
@@ -112,6 +124,7 @@ func runInit(args []string) int {
 			// EACCES, not a race — falling back to the default five
 			// silently would be surprising; say so.
 			fmt.Fprintln(os.Stderr, "sidecar init: could not read", target, "—", rerr)
+			needsAttention = true
 		}
 	} else {
 		// The picker is the one prompt that survives: it only runs when
@@ -122,13 +135,13 @@ func runInit(args []string) int {
 			picked, interrupted := pickSections(defaultSections())
 			if interrupted {
 				fmt.Fprintln(os.Stderr, "sidecar init: canceled — nothing written.")
-				return 1
+				return 1, ""
 			}
 			sections = picked
 		}
 		if err := scaffold(abs, sections); err != nil {
 			fmt.Fprintln(os.Stderr, "sidecar init:", err)
-			return 1
+			return 1, ""
 		}
 		fmt.Printf("Created %s\n", target)
 	}
@@ -146,6 +159,7 @@ func runInit(args []string) int {
 		dir := filepath.Dir(abs)
 		if _, tracked := git(dir, "ls-files", "--error-unmatch", legacyFile); tracked {
 			fmt.Printf("%s is tracked — run 'git rm --cached %s' to untrack it.\n", legacyFile, legacyFile)
+			needsAttention = true
 			// Write the exclude entry anyway, silently — a no-op while the
 			// file stays tracked, but it takes effect the instant the human
 			// runs the command above, so there's nothing left to do then.
@@ -174,16 +188,38 @@ func runInit(args []string) int {
 		if err != nil {
 			rel = filepath.Base(abs)
 		}
-		writeClaudeNote(root, rel, sections)
-		writeReconcileHook(root, rel, sections)
+		if writeClaudeNote(root, rel, sections) {
+			needsAttention = true
+		}
+		if writeReconcileHook(root, rel, sections) {
+			needsAttention = true
+		}
 	}
 
+	// A terminal run opens the viewer straight away, so the "Watch it:" hint
+	// would just name the command that's already running. Everything else —
+	// piped, CI, --yes, or a run that left an instruction on screen — gets the
+	// hint, because nothing is about to open.
+	if shouldOpenViewer(interactiveTTY(), assumeYes, needsAttention) {
+		return 0, abs
+	}
 	if isDefaultTarget {
 		fmt.Println("\nWatch it:  sidecar")
 	} else {
 		fmt.Printf("\nWatch it:  sidecar %s\n", target)
 	}
-	return 0
+	return 0, ""
+}
+
+// shouldOpenViewer decides whether `sidecar init` follows through into the
+// viewer. --yes is the contract for scripts and CI that need init to return
+// instead of blocking in the alt screen, so it suppresses the launch even from
+// a terminal — a wrapper running init under a pty would otherwise hang until
+// someone pressed q. needsAttention suppresses it too: the alt screen hides
+// everything init printed until the human quits, which is the wrong place for
+// a command they're meant to run.
+func shouldOpenViewer(interactive, assumeYes, needsAttention bool) bool {
+	return interactive && !assumeYes && !needsAttention
 }
 
 // sectionsFromBoard derives Section values from an existing board's own "## "
@@ -209,6 +245,18 @@ func sectionsFromBoard(raw string) ([]Section, bool) {
 	for i, s := range b.Sections {
 		sec := sectionFromLabel(s.Label)
 		sec.Hint = knownHints[s.Label]
+		if sec.Hint == "" {
+			// The label map misses a section that was renamed between
+			// template versions — a board predating "🧠 Needs you" still
+			// says "🧠 Needs action" — and dropping the hint for that one
+			// section while its siblings keep theirs is exactly what the map
+			// exists to prevent. roleSection matches it by emoji, so the
+			// hint survives the rename. A genuinely custom heading matches
+			// nothing and stays hintless, as it should.
+			if def, ok := roleSection(defaultSections(), sec); ok {
+				sec.Hint = def.Hint
+			}
+		}
 		sections[i] = sec
 	}
 	return sections, true
@@ -282,24 +330,25 @@ func claudeNote(rel string, sections []Section) string {
 		}
 		secLines.WriteString("\n")
 	}
+	var example string
+	if ex := entryStyleExample(sections); ex != "" {
+		example = "\n```markdown\n" + ex + "```\n"
+	}
 	const tmpl = "<!-- sidecar:review-queue -->\n" +
 		"## Sidecar board\n\n" +
 		"Maintain `%[1]s` — the live board the human watches with `sidecar`.\n" +
 		"Move each item to the section that matches its state:\n\n" +
 		"%[2]s" +
-		"\nWrite entries in Apple Developer documentation voice: declarative,\n" +
-		"front-loaded verb, present tense, one fact per sentence. State outcomes,\n" +
-		"not process.\n\n" +
-		"One entry is at most:\n" +
-		"- a status tag and title on the first line\n" +
-		"- two sentences of detail — more belongs in the PR or issue you link\n" +
-		"- bare URLs, each on its own line\n" +
-		"- one `Next:` line naming the single next action (optional)\n" +
-		"- entry text on one line — never hard-wrap; the viewer wraps to the pane\n\n" +
+		"\n%[3]s" +
+		"%[4]s" +
+		"\nThe board is a private channel between you and the human. Never mention\n" +
+		"it, its path, or sidecar itself in commit messages, PR titles or bodies,\n" +
+		"issue comments, or any other shared artifact — those readers don't have\n" +
+		"the board and the reference means nothing to them.\n\n" +
 		"If sidecar isn't installed: `go install github.com/than/sidecar@latest`,\n" +
 		"or a prebuilt binary from https://github.com/than/sidecar/releases/latest\n" +
 		"<!-- /sidecar:review-queue -->\n"
-	return fmt.Sprintf(tmpl, rel, secLines.String())
+	return fmt.Sprintf(tmpl, rel, secLines.String(), entryStyleRules(sections, "- "), example)
 }
 
 // replaceClaudeNote swaps the content between the sidecar markers for note.
@@ -348,19 +397,23 @@ Choice [B/c/n]: `)
 	}
 }
 
-func writeClaudeNote(root, rel string, sections []Section) {
+// writeClaudeNote installs or upgrades the note in CLAUDE.md. needsAttention
+// is true when it left the human something to do — a write that failed, or a
+// file it wouldn't touch — so init can keep that message in front of them
+// instead of scrolling it into the alt screen.
+func writeClaudeNote(root, rel string, sections []Section) (needsAttention bool) {
 	path := filepath.Join(root, "CLAUDE.md")
 	if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), claudeNoteMarker) {
 		if updated, ok := replaceClaudeNote(string(data), claudeNote(rel, sections)); ok {
 			if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
 				fmt.Fprintln(os.Stderr, "sidecar init:", err)
-				return
+				return true
 			}
 			fmt.Println("Updated the sidecar note in CLAUDE.md")
-			return
+			return false
 		}
 		fmt.Println("CLAUDE.md has a sidecar marker but no closing marker — update it by hand.")
-		return
+		return true
 	}
 	prefix := ""
 	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
@@ -373,14 +426,15 @@ func writeClaudeNote(root, rel string, sections []Section) {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
-		return
+		return true
 	}
 	defer f.Close()
 	if _, err := f.WriteString(prefix + claudeNote(rel, sections)); err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
-		return
+		return true
 	}
 	fmt.Println("Added a sidecar note to CLAUDE.md")
+	return false
 }
 
 // hookSentinel is a phrase embedded in the reconcile reminder so a re-run of
@@ -457,7 +511,10 @@ func reconcileHookEntry(rel string, sections []Section) map[string]any {
 // (including an older SessionStart one) so re-running `sidecar init` upgrades
 // cleanly. If the file exists but isn't valid JSON or has a shape it can't
 // safely edit, it prints the snippet instead of risking a clobber.
-func writeReconcileHook(root, rel string, sections []Section) {
+// writeReconcileHook installs or upgrades the per-turn reconcile hook.
+// needsAttention is true when it printed a snippet for the human to paste or a
+// write failed — see writeClaudeNote.
+func writeReconcileHook(root, rel string, sections []Section) (needsAttention bool) {
 	path := filepath.Join(root, ".claude", "settings.json")
 	entry := reconcileHookEntry(rel, sections)
 
@@ -466,30 +523,31 @@ func writeReconcileHook(root, rel string, sections []Section) {
 		settings := map[string]any{"hooks": map[string]any{"UserPromptSubmit": []any{entry}}}
 		if err := writeSettings(path, settings); err != nil {
 			fmt.Fprintln(os.Stderr, "sidecar init:", err)
-			return
+			return true
 		}
 		fmt.Println("Wrote .claude/settings.json with a per-turn reconcile hook.")
-		return
+		return false
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
-		return
+		return true
 	}
 
 	var settings map[string]any
 	if err := json.Unmarshal(data, &settings); err != nil || settings == nil {
 		fmt.Printf(".claude/settings.json isn't valid JSON — add this hook yourself:\n%s\n", snippetJSON(entry))
-		return
+		return true
 	}
 	if !mergeReconcileHook(settings, entry) {
 		fmt.Printf(".claude/settings.json has an unexpected shape — add this hook yourself:\n%s\n", snippetJSON(entry))
-		return
+		return true
 	}
 	if err := writeSettings(path, settings); err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
-		return
+		return true
 	}
 	fmt.Println("Updated .claude/settings.json with a per-turn reconcile hook.")
+	return false
 }
 
 // mergeReconcileHook strips any prior sidecar-owned hook entries from every

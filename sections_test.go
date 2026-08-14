@@ -29,10 +29,13 @@ func TestSectionLabel(t *testing.T) {
 
 func TestDefaultSections(t *testing.T) {
 	got := defaultSections()
-	if len(got) != 5 {
-		t.Fatalf("defaultSections len = %d, want 5", len(got))
+	if len(got) != 6 {
+		t.Fatalf("defaultSections len = %d, want 6", len(got))
 	}
-	wantEmoji := []string{"🧠", "🚧", "🚘", "✅", "📦"}
+	// 🧠 names its reader, and 🤖 gives queued-but-unstarted agent work a home.
+	// Without 🤖 that work lands in 🧠 (nothing for the human to do) or 🚧 (not
+	// actually in progress) — both observed across boards in the wild.
+	wantEmoji := []string{"🧠", "🤖", "🚧", "🚘", "✅", "📦"}
 	for i, e := range wantEmoji {
 		if got[i].Emoji != e {
 			t.Errorf("section %d emoji = %q, want %q", i, got[i].Emoji, e)
@@ -40,6 +43,9 @@ func TestDefaultSections(t *testing.T) {
 		if got[i].Name == "" || got[i].Hint == "" {
 			t.Errorf("section %d missing name/hint: %+v", i, got[i])
 		}
+	}
+	if got[0].Name != "Needs you" {
+		t.Errorf("first section = %q, want %q — the name must say whose action", got[0].Name, "Needs you")
 	}
 }
 
@@ -56,17 +62,56 @@ func TestRenderTemplateDefault(t *testing.T) {
 			t.Errorf("template comment missing hint for %q:\n%s", s.Name, out)
 		}
 	}
-	if strings.Count(out, "- nothing yet") != 5 {
-		t.Errorf("want 5 placeholder bullets, got %d", strings.Count(out, "- nothing yet"))
+	if strings.Count(out, "- nothing yet") != 6 {
+		t.Errorf("want 6 placeholder bullets, got %d", strings.Count(out, "- nothing yet"))
 	}
 	if !strings.Contains(out, "Prune early sections") {
 		t.Errorf("template missing prune instruction:\n%s", out)
 	}
-	if !strings.Contains(out, "Never hard-wrap entry text") {
-		t.Errorf("template missing no-hard-wrap instruction:\n%s", out)
+	for _, want := range []string{
+		"never hard-wrap; the viewer wraps to the pane",
+		"Apple Developer documentation voice",
+		"two sentences of detail",
+		"bare URLs, each on its own line",
+		"where things stand, not how they got there",
+		"only holds items where the human is the blocker",
+		"Split by who acts (right)",
+		// 82% of first-section entries in the wild carry no `Next:` line. The
+		// old "one `Next:` line … (optional)" framing is what made that
+		// defensible, so the rule now states the requirement outright.
+		"every item there ends with a `Next:` line",
+		"A finding, a question, or a status names no action",
+		"No action named (wrong)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("template missing entry-style instruction %q:\n%s", want, out)
+		}
 	}
 	if !strings.HasSuffix(out, "\n") || strings.HasSuffix(out, "\n\n") {
 		t.Errorf("template must end in exactly one newline:\n%q", out[len(out)-3:])
+	}
+}
+
+// The starter comment carries a worked example with real-looking "## "
+// headings and "- " bullets. They sit inside the HTML comment, so parseBoard
+// must skip them — otherwise the example's sections and items surface on the
+// board and in every diff.
+func TestRenderTemplateExampleStaysInComment(t *testing.T) {
+	b, ok := parseBoard(renderTemplate(defaultSections()))
+	if !ok {
+		t.Fatal("parseBoard found no sections in the starter template")
+	}
+	if len(b.Sections) != len(defaultSections()) {
+		var got []string
+		for _, s := range b.Sections {
+			got = append(got, s.Label)
+		}
+		t.Fatalf("want %d sections, got %d: %v", len(defaultSections()), len(b.Sections), got)
+	}
+	for _, s := range b.Sections {
+		if len(s.Items) != 1 {
+			t.Errorf("section %q: want 1 placeholder item, got %d", s.Label, len(s.Items))
+		}
 	}
 }
 
@@ -101,5 +146,35 @@ func TestRenderTemplateCustomNoHint(t *testing.T) {
 	}
 	if strings.Contains(out, "Todo = ") {
 		t.Errorf("hintless section should have no '= meaning' line:\n%s", out)
+	}
+}
+
+// The second worked pair exists to show where queued work goes. On a board
+// with no agent-queue section — every board that predates this template — it
+// used to retarget onto the in-progress section, teaching "file unstarted work
+// under In progress": the exact failure the pair was written to prevent. Drop
+// the pair instead; the first one still carries the placement lesson.
+func TestEntryStyleExampleDropsQueuePairWithoutAgentSection(t *testing.T) {
+	legacy := []Section{
+		{"🧠", "Needs action", "surfaced for the human to act on"},
+		{"🚧", "In progress", "actively being worked"},
+		{"🚘", "Parked", "deferred, not dropped"},
+		{"✅", "Done", "merged, not yet released"},
+		{"📦", "Shipped", "released (tag the version)"},
+	}
+	got := entryStyleExample(legacy)
+	if !strings.Contains(got, "Split by who acts (right)") {
+		t.Errorf("first pair should survive:\n%s", got)
+	}
+	if strings.Contains(got, "No action named (wrong)") || strings.Contains(got, "Queue the work instead") {
+		t.Errorf("queue pair emitted with no agent section:\n%s", got)
+	}
+	if strings.Contains(got, "#440") {
+		t.Errorf("queue pair's item leaked without its section:\n%s", got)
+	}
+	// With 🤖 present the pair comes back, pointed at it.
+	full := entryStyleExample(defaultSections())
+	if !strings.Contains(full, "Queue the work instead (right):\n\n## 🤖 Agent queue\n") {
+		t.Errorf("queue pair missing or misdirected with 🤖 present:\n%s", full)
 	}
 }

@@ -9,6 +9,13 @@ import (
 	"testing"
 )
 
+// runInit is the int-only form these tests use — main() is the only
+// production caller and it needs the path runInitBoard returns.
+func runInit(args []string) int {
+	code, _ := runInitBoard(args)
+	return code
+}
+
 func mustRun(t *testing.T, dir string, name string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(name, args...)
@@ -34,7 +41,7 @@ func TestInitScaffolds(t *testing.T) {
 	if !strings.HasPrefix(string(data), "# Sidecar") {
 		t.Errorf("scaffolded file missing header:\n%s", data)
 	}
-	for _, marker := range []string{"🧠", "🚧", "🚘", "✅", "📦"} {
+	for _, marker := range []string{"🧠", "🤖", "🚧", "🚘", "✅", "📦"} {
 		if !strings.Contains(string(data), marker) {
 			t.Errorf("template missing section marker %q", marker)
 		}
@@ -529,6 +536,55 @@ func TestClaudeNoteWritingRules(t *testing.T) {
 	for _, want := range []string{"Apple Developer documentation voice", "two sentences of detail", "bare URLs, each on its own line", "`Next:` line", "never hard-wrap; the viewer wraps to the pane"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note missing %q", want)
+		}
+	}
+	// Abstract rules alone let agents write status-as-story and file it under
+	// the human-action section. The note carries the placement rule and one
+	// worked wrong→right pair.
+	// Agents were citing the board and sidecar itself in PR bodies and commit
+	// messages, where the reader has neither.
+	for _, want := range []string{"where things stand, not how they got there", "only holds items where the human is the blocker", "Split by who acts (right)", "private channel between you and the human", "any other shared artifact", "every item there ends with a `Next:` line", "A finding, a question, or a status names no action"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note missing %q", want)
+		}
+	}
+}
+
+// The note names the first configured section in its placement rule, so a
+// custom section set must not leave the rule pointing at the built-in "🧠
+// Needs action".
+// The placement rule is about the human-blocker section specifically, so it
+// has to follow that section rather than whatever sits at index 0. The picker
+// reorders, renames, re-emojis and deletes sections; position carries no role.
+func TestClaudeNotePlacementRuleFollowsTheRole(t *testing.T) {
+	// Reordered and renamed, but 🧠 is still there: the rule names it, at its
+	// new heading, not the section that now happens to be first.
+	moved := []Section{
+		{"🚧", "In progress", "actively being worked"},
+		{"🧠", "For me", "the human is the blocker"},
+		{"🤖", "Queue", "queued for an agent, not started"},
+	}
+	note := claudeNote("board.md", moved)
+	if !strings.Contains(note, "`## 🧠 For me` only holds items") {
+		t.Errorf("rule doesn't follow the renamed 🧠 section:\n%s", note)
+	}
+	if strings.Contains(note, "`## 🚧 In progress` only holds items") {
+		t.Errorf("rule attached to whatever is first:\n%s", note)
+	}
+
+	// The human dropped the human section entirely. Saying nothing is right;
+	// asserting that some other section holds their blockers is not.
+	dropped := []Section{{"", "Todo", "stuff"}, {"", "Doing", "in flight"}}
+	note = claudeNote("board.md", dropped)
+	if strings.Contains(note, "only holds items where the human is the blocker") {
+		t.Errorf("placement rule emitted with no human section:\n%s", note)
+	}
+	if strings.Contains(note, "Split by who acts") {
+		t.Errorf("worked example emitted with no human section:\n%s", note)
+	}
+	for _, leak := range []string{"🧠", "Needs you"} {
+		if strings.Contains(note, leak) {
+			t.Errorf("note leaked default section %q into a custom set:\n%s", leak, note)
 		}
 	}
 }
@@ -1116,4 +1172,135 @@ func TestRunInitYesCustomPathSkipsExcludePrompt(t *testing.T) {
 	if !strings.Contains(string(data), sidecarDirName+"/") {
 		t.Errorf(".sidecar/ not excluded alongside a custom path: %q", data)
 	}
+}
+
+// Two things suppress the viewer launch. --yes is the "don't be interactive"
+// switch — a wrapper running `sidecar init --yes` under a pty would otherwise
+// block in the alt screen until someone pressed q. And a run that printed an
+// instruction keeps the shell, because the alt screen hides that instruction
+// until the human quits.
+func TestShouldOpenViewer(t *testing.T) {
+	cases := []struct {
+		interactive, assumeYes, needsAttention, want bool
+	}{
+		{true, false, false, true},   // bare `sidecar init` from a terminal
+		{true, true, false, false},   // --yes keeps its non-interactive contract
+		{false, false, false, false}, // piped or CI: no viewer to open
+		{false, true, false, false},
+		// init printed something to act on — the alt screen would bury it
+		// until the human quit, so stay in the shell and print the hint.
+		{true, false, true, false},
+		{true, true, true, false},
+	}
+	for _, c := range cases {
+		if got := shouldOpenViewer(c.interactive, c.assumeYes, c.needsAttention); got != c.want {
+			t.Errorf("shouldOpenViewer(interactive=%v, assumeYes=%v, needsAttention=%v) = %v, want %v",
+				c.interactive, c.assumeYes, c.needsAttention, got, c.want)
+		}
+	}
+}
+
+// runInitBoard hands main() a path only when it should launch. Help, a flag
+// error, and --yes all return empty while still doing (or correctly skipping)
+// the setup work.
+func TestRunInitBoardOpenPath(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	withWorkDir(t, dir, func() {
+		var code int
+		var open string
+		out := captureStdout(t, func() {
+			code, open = runInitBoard([]string{"--yes", "--no-claude"})
+		})
+		if code != 0 {
+			t.Fatalf("init exit = %d, want 0", code)
+		}
+		if open != "" {
+			t.Errorf("--yes returned %q, want empty so main doesn't launch", open)
+		}
+		if !strings.Contains(out, "Watch it:") {
+			t.Errorf("a non-launching run must print the hint instead:\n%s", out)
+		}
+		if _, err := os.Stat(filepath.Join(sidecarDirName, "sidecar.md")); err != nil {
+			t.Errorf("board not created: %v", err)
+		}
+
+		captureStdout(t, func() {
+			code, open = runInitBoard([]string{"-h"})
+		})
+		if code != 0 || open != "" {
+			t.Errorf("help returned (%d, %q), want (0, \"\")", code, open)
+		}
+		captureStderr(t, func() {
+			code, open = runInitBoard([]string{"--bogus"})
+		})
+		if code != 2 || open != "" {
+			t.Errorf("unknown flag returned (%d, %q), want (2, \"\")", code, open)
+		}
+	})
+}
+
+// Renaming 🧠 Needs action to 🧠 Needs you means an existing board's heading no
+// longer matches the label-keyed hint map, so init re-runs would emit that one
+// section with no "— meaning" while its siblings kept theirs. The role lookup
+// matches it by emoji, so the hint survives the rename.
+func TestSectionsFromBoardRecoversHintAcrossRename(t *testing.T) {
+	legacy := "# Sidecar\n\n## 🧠 Needs action\n\n- x\n\n## 🚧 In progress\n\n- y\n"
+	got, ok := sectionsFromBoard(legacy)
+	if !ok {
+		t.Fatal("sectionsFromBoard rejected a legacy board")
+	}
+	if got[0].Hint != defaultSections()[0].Hint {
+		t.Errorf("renamed section lost its hint: got %q, want %q", got[0].Hint, defaultSections()[0].Hint)
+	}
+	if got[1].Hint == "" {
+		t.Errorf("unrenamed section lost its hint: %+v", got[1])
+	}
+	// A genuinely custom section must still come back hintless.
+	custom, _ := sectionsFromBoard("## Todo\n\n- x\n")
+	if custom[0].Hint != "" {
+		t.Errorf("custom section invented a hint: %q", custom[0].Hint)
+	}
+}
+
+// The launch decision is only as good as the reporting behind it: each writer
+// has to say when it left the human an instruction rather than just printing
+// one and returning.
+func TestWritersReportNeedsAttention(t *testing.T) {
+	t.Run("hook on invalid JSON", func(t *testing.T) {
+		root := t.TempDir()
+		os.MkdirAll(filepath.Join(root, ".claude"), 0o755)
+		os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte("{not json"), 0o644)
+		var got bool
+		captureStdout(t, func() { got = writeReconcileHook(root, "SIDECAR.md", defaultSections()) })
+		if !got {
+			t.Error("printed a paste-this snippet but reported nothing to attend to")
+		}
+	})
+	t.Run("hook on a clean write", func(t *testing.T) {
+		root := t.TempDir()
+		var got bool
+		captureStdout(t, func() { got = writeReconcileHook(root, "SIDECAR.md", defaultSections()) })
+		if got {
+			t.Error("a successful write must not hold back the viewer")
+		}
+	})
+	t.Run("note with an unclosed marker", func(t *testing.T) {
+		root := t.TempDir()
+		os.WriteFile(filepath.Join(root, "CLAUDE.md"),
+			[]byte("# P\n\n<!-- "+claudeNoteMarker+" -->\nstranded\n"), 0o644)
+		var got bool
+		captureStdout(t, func() { got = writeClaudeNote(root, "SIDECAR.md", defaultSections()) })
+		if !got {
+			t.Error("told the human to fix it by hand but reported nothing to attend to")
+		}
+	})
+	t.Run("note on a clean append", func(t *testing.T) {
+		root := t.TempDir()
+		var got bool
+		captureStdout(t, func() { got = writeClaudeNote(root, "SIDECAR.md", defaultSections()) })
+		if got {
+			t.Error("a successful append must not hold back the viewer")
+		}
+	})
 }
