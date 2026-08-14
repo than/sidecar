@@ -267,7 +267,10 @@ func TestInlineURLWidthInvariantWhenIndented(t *testing.T) {
 		"blockquote": "## S\n\n> before " + long + " after\n",
 		"bq nested":  "## S\n\n> > before " + long + " after\n",
 	}
-	for _, w := range []int{20, 40, 72} {
+	// 10 is renderMarkdown's floor, and inlineReserve's own 8-cell floor
+	// ignores block indent — the narrow rows prove that floor can't push a
+	// token past the pane inside an indented block.
+	for _, w := range []int{10, 12, 16, 20, 40, 72} {
 		for name, src := range cases {
 			out, err := renderMarkdown(src, w, true)
 			if err != nil {
@@ -278,6 +281,49 @@ func TestInlineURLWidthInvariantWhenIndented(t *testing.T) {
 					t.Errorf("%s at width %d: line overflows at %d cells:\n%q", name, w, got, visibleText(ln))
 				}
 			}
+		}
+	}
+}
+
+// Both kinds of URL in one item: the inline one is stashed with a padded
+// placeholder, the continuation line with the own-line one, and they share
+// an index space and a restore pass. Each must come back with its own intact
+// target, and neither may starve the other's display text.
+//
+// What this does NOT cover, having tried: the two landing on the same
+// rendered line. glamour keeps a bare-URL continuation line on its own line
+// here — so do two consecutive own-line URLs, contrary to the reflow case
+// restoreBareURLs' comment describes. The shared-budget arithmetic is
+// defensive rather than live, so the ordering claim (inline restored first,
+// width-for-width, leaving the budget maths a truthful line) can't be
+// exercised end to end; it holds by construction instead.
+func TestInlineAndOwnLineURLInOneItem(t *testing.T) {
+	src := "## S\n\n- see https://example.test/inline for context\n  https://example.test/ownline\n"
+	for _, w := range []int{60, 72, 100} {
+		out, err := renderMarkdown(src, w, true)
+		if err != nil {
+			t.Fatalf("width %d: %v", w, err)
+		}
+		got := oscTargets(out)
+		if len(got) != 2 {
+			t.Errorf("width %d: got %d link targets, want 2: %v", w, len(got), got)
+			continue
+		}
+		if got[0] != "https://example.test/inline" || got[1] != "https://example.test/ownline" {
+			t.Errorf("width %d: targets = %v, want inline then own-line", w, got)
+		}
+		// Neither URL may starve the other, and the line must still fit.
+		for _, ln := range strings.Split(out, "\n") {
+			if x := xansi.StringWidth(ln); x > w {
+				t.Errorf("width %d: line overflows at %d cells:\n%q", w, x, visibleText(ln))
+			}
+		}
+		vis := visibleText(out)
+		if !strings.Contains(vis, "example.test/inline") {
+			t.Errorf("width %d: inline URL starved to nothing:\n%s", w, vis)
+		}
+		if !strings.Contains(vis, "example.test/ownline") {
+			t.Errorf("width %d: own-line URL starved to nothing:\n%s", w, vis)
 		}
 	}
 }

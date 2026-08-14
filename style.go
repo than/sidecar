@@ -227,14 +227,14 @@ func inlineDisplay(url string) string {
 // token doesn't split — it overflows, breaking the one invariant every
 // line in this renderer holds.
 func inlineReserve(display string, width int) int {
-	max := width - 4
-	if max < 8 {
-		max = 8
+	limit := width - 4
+	if limit < 8 {
+		limit = 8
 	}
-	if w := visibleWidth(display); w < max {
+	if w := visibleWidth(display); w < limit {
 		return w
 	}
-	return max
+	return limit
 }
 
 // inlinePlaceholder builds a markdown-inert token exactly reserve cells
@@ -297,6 +297,14 @@ func codeSpanRanges(line string) [][2]int {
 // placeholder, appending the URLs to *urls. URLs that are already markdown
 // syntax — the target of "[label](url)", an "<url>" autolink, or a link
 // reference definition — are glamour's to render and are left alone.
+//
+// Known boundary, same shape as stashBareURLs' loose-list note: every one of
+// those checks reads a single line. A construct split across a source line
+// break — a code span opened on one line and closed on the next, or a
+// "[label](" whose URL wraps — leaves the second line looking like a plain
+// inline URL, and it gets stashed. Recognising it needs real inline-parser
+// state; board entries are written one per line, so this hasn't been worth
+// the complexity.
 func stashInlineURLs(line string, urls *[]string, width int) string {
 	if refDefLine.MatchString(line) {
 		return line
@@ -358,7 +366,13 @@ func restoreInlineURLs(rendered string, urls []string, lr, lg, lb int) string {
 		}
 		reserve := len(m[1]) + len(m[2]) + 1 // "I" + digits + padding
 		display := xansi.Truncate(inlineDisplay(urls[idx]), reserve, "…")
-		styled := fmt.Sprintf("\x1b[4;38;2;%d;%d;%dm%s\x1b[0m", lr, lg, lb, display)
+		// Close the underline and the foreground colour specifically rather
+		// than resetting everything: an inline URL sits inside whatever run
+		// glamour opened for the surrounding text node, so a blanket
+		// \x1b[0m would drop that node's bold, or an H1's background, for
+		// the rest of the line. The own-line path can afford \x1b[0m
+		// because it owns its whole line.
+		styled := fmt.Sprintf("\x1b[4;38;2;%d;%d;%dm%s\x1b[24;39m", lr, lg, lb, display)
 		return hyperlink(urls[idx], styled)
 	})
 }
