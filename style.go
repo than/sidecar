@@ -168,6 +168,142 @@ func hasCodeIndent(indent string) bool {
 	return strings.Contains(indent, "\t") || len(indent) >= 4
 }
 
+// inlineURLFind matches a bare URL anywhere on a line, including mid-
+// sentence. stashBareURLs only ever runs it on lines bareURLLine already
+// rejected, so the two paths never see the same URL.
+var inlineURLFind = regexp.MustCompile(`https?://\S+`)
+
+// refDefLine matches a link reference definition ("[1]: https://…"), whose
+// URL is markdown syntax rather than displayed text.
+var refDefLine = regexp.MustCompile(`^[ \t]*\[[^\]]*\]:`)
+
+// inlinePlaceholderFind matches a reserved-width inline placeholder,
+// capturing its index and its padding run.
+var inlinePlaceholderFind = regexp.MustCompile("\x1fI(\\d+)(x*)\x1f")
+
+// trimURLTail moves trailing sentence punctuation back out of a URL. A
+// whitespace-delimited match swallows the period ending the sentence, the
+// comma before the next clause, and the paren that opened before the URL —
+// none of which belong in the link target. A closing paren is only trimmed
+// when the URL has no unmatched opening one, so a Wikipedia-style
+// "…/Foo_(bar)" survives intact.
+func trimURLTail(url string) string {
+	for len(url) > 0 {
+		c := url[len(url)-1]
+		switch c {
+		case '.', ',', ';', ':', '!', '?', '\'', '"':
+			url = url[:len(url)-1]
+			continue
+		case ')':
+			if strings.Count(url, "(") >= strings.Count(url, ")") {
+				return url
+			}
+			url = url[:len(url)-1]
+			continue
+		}
+		return url
+	}
+	return url
+}
+
+// inlineDisplay is the visible text for an inline URL: the scheme dropped,
+// control bytes removed. Mid-sentence there's no room for "https://" and it
+// carries no information a reader needs — the full URL stays in the OSC 8
+// target either way.
+func inlineDisplay(url string) string {
+	u := stripControlBytes(url)
+	u = strings.TrimPrefix(u, "https://")
+	u = strings.TrimPrefix(u, "http://")
+	return u
+}
+
+// inlineReserve is how many cells an inline URL's display text gets. It is
+// baked into the placeholder's own width so glamour wraps the sentence
+// around a token of the final size, which is what keeps the URL off the
+// wrap point entirely. Clamped below the wrap width because an oversize
+// token doesn't split — it overflows, breaking the one invariant every
+// line in this renderer holds.
+func inlineReserve(display string, width int) int {
+	max := width - 4
+	if max < 8 {
+		max = 8
+	}
+	if w := visibleWidth(display); w < max {
+		return w
+	}
+	return max
+}
+
+// inlinePlaceholder builds a markdown-inert token exactly reserve cells
+// wide: the \x1f delimiters measure zero, so "I", the index digits and the
+// "x" padding carry the whole width. Padding with a letter (not "_", "*" or
+// "~") keeps goldmark's inline parser from finding emphasis in it.
+func inlinePlaceholder(idx, reserve int) string {
+	body := "I" + strconv.Itoa(idx)
+	if pad := reserve - len(body); pad > 0 {
+		body += strings.Repeat("x", pad)
+	}
+	return "\x1f" + body + "\x1f"
+}
+
+// stashInlineURLs replaces each bare URL inside line with a reserved-width
+// placeholder, appending the URLs to *urls. URLs that are already markdown
+// syntax — the target of "[label](url)", an "<url>" autolink, or a link
+// reference definition — are glamour's to render and are left alone.
+func stashInlineURLs(line string, urls *[]string, width int) string {
+	if refDefLine.MatchString(line) {
+		return line
+	}
+	matches := inlineURLFind.FindAllStringIndex(line, -1)
+	if matches == nil {
+		return line
+	}
+	var b strings.Builder
+	cursor := 0
+	for _, m := range matches {
+		start, end := m[0], m[1]
+		if start >= 2 && line[start-2:start] == "](" {
+			continue // the target half of an inline link
+		}
+		if start >= 1 && line[start-1] == '<' {
+			continue // an autolink
+		}
+		url := trimURLTail(line[start:end])
+		if url == "" {
+			continue
+		}
+		b.WriteString(line[cursor:start])
+		cursor = start + len(url)
+		idx := len(*urls)
+		*urls = append(*urls, url)
+		b.WriteString(inlinePlaceholder(idx, inlineReserve(inlineDisplay(url), width)))
+	}
+	if cursor == 0 {
+		return line
+	}
+	b.WriteString(line[cursor:])
+	return b.String()
+}
+
+// restoreInlineURLs swaps every reserved-width placeholder for its styled,
+// hyperlinked display text. The substitution is width-for-width — the
+// placeholder was built at exactly the size the display text renders to —
+// so no line changes width and the shared-budget arithmetic the own-line
+// path does afterwards still measures a truthful line.
+func restoreInlineURLs(rendered string, urls []string, lr, lg, lb int) string {
+	return inlinePlaceholderFind.ReplaceAllStringFunc(rendered, func(tok string) string {
+		m := inlinePlaceholderFind.FindStringSubmatch(tok)
+		idx, err := strconv.Atoi(m[1])
+		if err != nil || idx < 0 || idx >= len(urls) {
+			return ""
+		}
+		reserve := len(m[1]) + len(m[2]) + 1 // "I" + digits + padding
+		display := xansi.Truncate(inlineDisplay(urls[idx]), reserve, "…")
+		styled := fmt.Sprintf("\x1b[4;38;2;%d;%d;%dm%s\x1b[0m", lr, lg, lb, display)
+		return hyperlink(urls[idx], styled)
+	})
+}
+
 // stashBareURLs replaces every bare-URL-only line with a short placeholder,
 // returning the stashed URLs in order (skipping lines inside fenced or
 // indented code blocks). Glamour's word-wrap hard-splits a long link token
@@ -176,7 +312,7 @@ func hasCodeIndent(indent string) bool {
 // of pushing the whole word to the next line — so the placeholder keeps
 // such lines out of that path entirely. restoreBareURLs puts the real,
 // styled, hyperlinked URL back after rendering.
-func stashBareURLs(raw string) (string, []string) {
+func stashBareURLs(raw string, width int) (string, []string) {
 	// A board line already containing \x1f — a pasted-tool-output edge
 	// case, the same threat model stripControlBytes exists for — would
 	// otherwise prefix-match a real placeholder in restoreBareURLs' search
@@ -256,6 +392,10 @@ func stashBareURLs(raw string) (string, []string) {
 
 		m := bareURLLine.FindStringSubmatch(line)
 		if m == nil {
+			// Not a URL-only line, but it may still carry one inside a
+			// sentence. Those fall through to glamour untouched otherwise:
+			// never hyperlinked, and hard-split at the wrap point.
+			lines[i] = stashInlineURLs(line, &urls, width)
 			continue
 		}
 		// Known boundary, not a bug: a *loose* list's second paragraph
@@ -355,8 +495,14 @@ func restoreBareURLs(rendered string, urls []string, width int) string {
 	if len(urls) == 0 {
 		return rendered
 	}
-	lines := strings.Split(rendered, "\n")
 	lr, lg, lb := hexToRGB(colorLink) // loop-invariant
+	// Inline URLs first, and width-for-width: their placeholders already
+	// reserved exactly the cells their display text occupies. Doing them
+	// first means the own-line budget arithmetic below measures a line whose
+	// inline links are real content at their real width, which is what it
+	// would have measured had they never been stashed.
+	rendered = restoreInlineURLs(rendered, urls, lr, lg, lb)
+	lines := strings.Split(rendered, "\n")
 	for li, line := range lines {
 		matches := placeholderFind.FindAllStringSubmatchIndex(line, -1)
 		if matches == nil {
@@ -446,7 +592,7 @@ func renderMarkdown(raw string, width int, linkify bool) (string, error) {
 	}
 	var urls []string
 	if linkify {
-		raw, urls = stashBareURLs(raw)
+		raw, urls = stashBareURLs(raw, width)
 	}
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(styleConfig()),
