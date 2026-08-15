@@ -168,6 +168,20 @@ func hasCodeIndent(indent string) bool {
 	return strings.Contains(indent, "\t") || len(indent) >= 4
 }
 
+// stashedLink is one URL held out of glamour's way. target is where a click
+// goes; display is the text drawn in its place, which is the URL itself for
+// an own-line link, the scheme-stripped URL for one mid-sentence, and the
+// label for a markdown "[label](url)".
+type stashedLink struct {
+	target  string
+	display string
+}
+
+// mdInlineLinkFind matches a markdown inline link whose target is a URL,
+// capturing the label and the target. The label is taken literally — any
+// markup inside it renders as text, since glamour never sees the construct.
+var mdInlineLinkFind = regexp.MustCompile(`\[([^\]\[]*)\]\((https?://[^)\s]+)\)`)
+
 // inlineURLFind matches a bare URL anywhere on a line, including mid-
 // sentence. stashBareURLs only ever runs it on lines bareURLLine already
 // rejected, so the two paths never see the same URL.
@@ -335,6 +349,72 @@ func codeSpanRanges(line string) [][2]int {
 	return ranges
 }
 
+// stashMarkdownLinks replaces every "[label](url)" whose target is a URL
+// with a placeholder reserving the label's width, recording the href as the
+// click target and the label as the display text. glamour v1 has no OSC 8 at
+// all — it renders the construct as the label followed by the whole href in
+// plain text — so the only way a markdown link reads like a link is to keep
+// it away from glamour entirely, exactly as bare URLs already are.
+//
+// A non-URL target (a relative path, an anchor, a mailto:) is left alone:
+// there's nothing a terminal could usefully open. So is anything inside a
+// code span, which is literal text a reader copies.
+func stashMarkdownLinks(line string, urls *[]stashedLink, width int) string {
+	matches := mdInlineLinkFind.FindAllStringSubmatchIndex(line, -1)
+	if matches == nil {
+		return line
+	}
+	spans := codeSpanRanges(line)
+	var b strings.Builder
+	cursor := 0
+	for _, m := range matches {
+		start, end := m[0], m[1]
+		if inAnyRange(spans, start) {
+			continue
+		}
+		label := strings.TrimSpace(line[m[2]:m[3]])
+		target := line[m[4]:m[5]]
+		if label == "" || stripControlBytes(label) == "" {
+			continue // nothing to click on
+		}
+		// The whole construct is one wrap unit once it collapses to a
+		// label, so measure the room the same way the bare-URL path does.
+		wordStart := start
+		for wordStart > 0 && !isSpaceByte(line[wordStart-1]) {
+			wordStart--
+		}
+		wordEnd := end
+		for wordEnd < len(line) && !isSpaceByte(line[wordEnd]) {
+			wordEnd++
+		}
+		affix := visibleWidth(line[wordStart:start]) + visibleWidth(line[end:wordEnd])
+		room := width - indentWidth(line) - affix
+		if room < minInlineReserve || room < 1+len(strconv.Itoa(len(*urls))) {
+			continue
+		}
+		b.WriteString(line[cursor:start])
+		cursor = end
+		idx := len(*urls)
+		*urls = append(*urls, stashedLink{target: target, display: stripControlBytes(label)})
+		b.WriteString(inlinePlaceholder(idx, inlineReserve(stripControlBytes(label), room)))
+	}
+	if cursor == 0 {
+		return line
+	}
+	b.WriteString(line[cursor:])
+	return b.String()
+}
+
+// inAnyRange reports whether at falls inside one of ranges.
+func inAnyRange(ranges [][2]int, at int) bool {
+	for _, r := range ranges {
+		if at >= r[0] && at < r[1] {
+			return true
+		}
+	}
+	return false
+}
+
 // stashInlineURLs replaces each bare URL inside line with a reserved-width
 // placeholder, appending the URLs to *urls. URLs that are already markdown
 // syntax — the target of "[label](url)", an "<url>" autolink, or a link
@@ -347,7 +427,7 @@ func codeSpanRanges(line string) [][2]int {
 // inline URL, and it gets stashed. Recognising it needs real inline-parser
 // state; board entries are written one per line, so this hasn't been worth
 // the complexity.
-func stashInlineURLs(line string, urls *[]string, width int) string {
+func stashInlineURLs(line string, urls *[]stashedLink, width int) string {
 	if refDefLine.MatchString(line) {
 		return line
 	}
@@ -356,14 +436,6 @@ func stashInlineURLs(line string, urls *[]string, width int) string {
 		return line
 	}
 	spans := codeSpanRanges(line)
-	inCodeSpan := func(at int) bool {
-		for _, r := range spans {
-			if at >= r[0] && at < r[1] {
-				return true
-			}
-		}
-		return false
-	}
 	var b strings.Builder
 	cursor := 0
 	for _, m := range matches {
@@ -379,7 +451,7 @@ func stashInlineURLs(line string, urls *[]string, width int) string {
 			// click open the label instead of the real target.
 			continue
 		}
-		if inCodeSpan(start) {
+		if inAnyRange(spans, start) {
 			continue // verbatim: a command the reader copies
 		}
 		url := trimURLTail(line[start:end])
@@ -414,7 +486,7 @@ func stashInlineURLs(line string, urls *[]string, width int) string {
 		b.WriteString(line[cursor:start])
 		cursor = start + len(url)
 		idx = len(*urls)
-		*urls = append(*urls, url)
+		*urls = append(*urls, stashedLink{target: url, display: inlineDisplay(url)})
 		b.WriteString(inlinePlaceholder(idx, inlineReserve(inlineDisplay(url), room)))
 	}
 	if cursor == 0 {
@@ -429,7 +501,7 @@ func stashInlineURLs(line string, urls *[]string, width int) string {
 // placeholder was built at exactly the size the display text renders to —
 // so no line changes width and the shared-budget arithmetic the own-line
 // path does afterwards still measures a truthful line.
-func restoreInlineURLs(rendered string, urls []string, lr, lg, lb int) string {
+func restoreInlineURLs(rendered string, urls []stashedLink, lr, lg, lb int) string {
 	locs := inlinePlaceholderFind.FindAllStringSubmatchIndex(rendered, -1)
 	if locs == nil {
 		return rendered
@@ -444,9 +516,9 @@ func restoreInlineURLs(rendered string, urls []string, lr, lg, lb int) string {
 			continue
 		}
 		reserve := (m[3] - m[2]) + (m[5] - m[4]) + 1 // "I" + digits + padding
-		display := xansi.Truncate(inlineDisplay(urls[idx]), reserve, "…")
+		display := xansi.Truncate(stripControlBytes(urls[idx].display), reserve, "…")
 		styled := fmt.Sprintf("\x1b[4;38;2;%d;%d;%dm%s", lr, lg, lb, display)
-		b.WriteString(hyperlink(urls[idx], styled))
+		b.WriteString(hyperlink(urls[idx].target, styled))
 		b.WriteString(enclosingSGR(rendered, m[0]))
 	}
 	b.WriteString(rendered[cursor:])
@@ -484,7 +556,7 @@ func enclosingSGR(rendered string, at int) string {
 // of pushing the whole word to the next line — so the placeholder keeps
 // such lines out of that path entirely. restoreBareURLs puts the real,
 // styled, hyperlinked URL back after rendering.
-func stashBareURLs(raw string, width int) (string, []string) {
+func stashBareURLs(raw string, width int) (string, []stashedLink) {
 	// A board line already containing \x1f — a pasted-tool-output edge
 	// case, the same threat model stripControlBytes exists for — would
 	// otherwise prefix-match a real placeholder in restoreBareURLs' search
@@ -492,7 +564,7 @@ func stashBareURLs(raw string, width int) (string, []string) {
 	// text, so it's always safe to drop from the input outright.
 	raw = strings.ReplaceAll(raw, "\x1f", "")
 	lines := strings.Split(raw, "\n")
-	var urls []string
+	var urls []stashedLink
 	var fenceChar byte
 	var fenceLen int
 	inIndentedCode := false
@@ -564,9 +636,12 @@ func stashBareURLs(raw string, width int) (string, []string) {
 
 		m := bareURLLine.FindStringSubmatch(line)
 		if m == nil {
-			// Not a URL-only line, but it may still carry one inside a
+			// Not a URL-only line, but it may still carry links inside a
 			// sentence. Those fall through to glamour untouched otherwise:
 			// never hyperlinked, and hard-split at the wrap point.
+			// Markdown links go first so their href is claimed as a target
+			// rather than being seen as a bare URL by the pass below.
+			line = stashMarkdownLinks(line, &urls, width)
 			lines[i] = stashInlineURLs(line, &urls, width)
 			continue
 		}
@@ -576,7 +651,7 @@ func stashBareURLs(raw string, width int) (string, []string) {
 		// wrap-split. Distinguishing it needs real list-context tracking;
 		// the board convention doesn't produce loose lists, so this hasn't
 		// been worth the complexity.
-		urls = append(urls, m[3])
+		urls = append(urls, stashedLink{target: m[3], display: m[3]})
 		// m[4] (trailing whitespace) is dropped, not reinserted: tidy()
 		// strips it from the final output anyway, and keeping it here
 		// would shrink restoreBareURLs' elision budget for spaces nobody
@@ -663,7 +738,7 @@ var placeholderFind = regexp.MustCompile(`\x1fU(\d+)\x1f`)
 // for and collide on. If a URL's share of the line's budget is under 1
 // cell, it's dropped rather than drawn — an over-width line would break
 // the one invariant every other line in this renderer holds.
-func restoreBareURLs(rendered string, urls []string, width int) string {
+func restoreBareURLs(rendered string, urls []stashedLink, width int) string {
 	if len(urls) == 0 {
 		return rendered
 	}
@@ -716,7 +791,7 @@ func restoreBareURLs(rendered string, urls []string, width int) string {
 			if err != nil || idx < 0 || idx >= len(urls) || share < 1 {
 				continue // drop this URL: no room, or a malformed index
 			}
-			url := urls[idx]
+			url := urls[idx].target
 			// xansi.Truncate, not go-runewidth: it's grapheme-cluster
 			// aware (a VS16 emoji presentation sequence is one cluster
 			// but two runes) and it's the same measurement visibleWidth
@@ -724,7 +799,7 @@ func restoreBareURLs(rendered string, urls []string, width int) string {
 			// budget with one metric and building the display text with
 			// a different one is exactly how that invariant would
 			// quietly break again.
-			display := xansi.Truncate(stripControlBytes(url), share, "…")
+			display := xansi.Truncate(stripControlBytes(urls[idx].display), share, "…")
 			// Raw ANSI, not termenv.String: termenv.String binds to
 			// termenv's auto-detected package-global Output profile,
 			// which this codebase deliberately overrides everywhere else
@@ -762,7 +837,7 @@ func renderMarkdown(raw string, width int, linkify bool) (string, error) {
 	if width < 10 {
 		width = 10
 	}
-	var urls []string
+	var urls []stashedLink
 	if linkify {
 		raw, urls = stashBareURLs(raw, width)
 	}

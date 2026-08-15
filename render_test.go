@@ -432,7 +432,7 @@ func TestBareURLKeepsTrailingContent(t *testing.T) {
 func TestBareURLNoRoomDropsRatherThanOverflows(t *testing.T) {
 	prefix := strings.Repeat("x", 10) // consumes the entire width on its own
 	rendered := prefix + urlPlaceholder(0)
-	out := restoreBareURLs(rendered, []string{"https://example.test/no-room-left"}, 10)
+	out := restoreBareURLs(rendered, []stashedLink{{target: "https://example.test/no-room-left", display: "https://example.test/no-room-left"}}, 10)
 	if w := visibleWidth(out); w > 10 {
 		t.Errorf("visible width %d > 10: %q", w, out)
 	}
