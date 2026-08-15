@@ -403,10 +403,12 @@ func stashInlineURLs(line string, urls *[]string, width int) string {
 		}
 		affix := visibleWidth(line[wordStart:start]) + visibleWidth(line[start+len(url):wordEnd])
 		room := width - indentWidth(line) - affix
-		if room < minInlineReserve {
-			// The indent and whatever is glued to the URL have already
-			// filled the line; there is no width left to reserve and the
-			// line overflows whatever we do. Leave it to glamour.
+		// The token's own body is "I" plus the index digits, so a reserve
+		// smaller than that yields a token wider than the width reserved
+		// for it — glamour then lays out something bigger than the line
+		// allows. Both guards bail to glamour, which is what happens on a
+		// line this tight regardless.
+		if room < minInlineReserve || room < 1+len(strconv.Itoa(len(*urls))) {
 			continue
 		}
 		b.WriteString(line[cursor:start])
