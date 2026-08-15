@@ -220,6 +220,14 @@ func inlineDisplay(url string) string {
 	return u
 }
 
+// minInlineReserve is the smallest display an inline URL is drawn at. One
+// cell renders as a lone ellipsis — barely readable, but still clickable,
+// and the alternative is worse: handing the URL back to glamour means the
+// unbroken token overflows the pane by its whole length rather than by a few
+// cells. Since a reserve never exceeds the room passed in, keeping it at or
+// above 1 is also what guarantees the affix plus the token fit the line.
+const minInlineReserve = 1
+
 // inlineReserve is how many cells an inline URL's display text gets. It is
 // baked into the placeholder's own width so glamour wraps the sentence
 // around a token of the final size, which is what keeps the URL off the
@@ -229,9 +237,16 @@ func inlineDisplay(url string) string {
 // line's own indent: glamour gives an indented block that much less room,
 // and a fixed margin here wouldn't grow with nesting depth.
 func inlineReserve(display string, width int) int {
+	// The 4-cell slack keeps the token clear of the wrap point in the common
+	// case; when the line is too tight for that, the reserve shrinks to fit
+	// rather than overflowing — a one-cell ellipsis still carries a working
+	// link, an over-wide token breaks every line's invariant.
 	limit := width - 4
-	if limit < 8 {
-		limit = 8
+	if limit < minInlineReserve {
+		limit = minInlineReserve
+	}
+	if limit > width {
+		limit = width
 	}
 	if w := visibleWidth(display); w < limit {
 		return w
@@ -373,10 +388,7 @@ func stashInlineURLs(line string, urls *[]string, width int) string {
 			// and an OSC 8 pair wrapping no text is worse than raw text.
 			continue
 		}
-		b.WriteString(line[cursor:start])
-		cursor = start + len(url)
-		idx := len(*urls)
-		*urls = append(*urls, url)
+		var idx int
 		// The wrap unit is the whole space-delimited word, not the URL:
 		// "Source:https://…" is one word, so anything glued to either end
 		// has to come out of the reserve or the token pushes the line past
@@ -391,6 +403,16 @@ func stashInlineURLs(line string, urls *[]string, width int) string {
 		}
 		affix := visibleWidth(line[wordStart:start]) + visibleWidth(line[start+len(url):wordEnd])
 		room := width - indentWidth(line) - affix
+		if room < minInlineReserve {
+			// The indent and whatever is glued to the URL have already
+			// filled the line; there is no width left to reserve and the
+			// line overflows whatever we do. Leave it to glamour.
+			continue
+		}
+		b.WriteString(line[cursor:start])
+		cursor = start + len(url)
+		idx = len(*urls)
+		*urls = append(*urls, url)
 		b.WriteString(inlinePlaceholder(idx, inlineReserve(inlineDisplay(url), room)))
 	}
 	if cursor == 0 {
@@ -441,8 +463,11 @@ var sgrFind = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 // the line. glamour opens one run for the whole text node the URL sits
 // inside, so that run has to be put back exactly.
 func enclosingSGR(rendered string, at int) string {
-	lineStart := strings.LastIndexByte(rendered[:at], '\n') + 1
-	prior := sgrFind.FindAllString(rendered[lineStart:at], -1)
+	// Not anchored to the line: SGR state persists across newlines, so the
+	// run in effect at a placeholder may have been opened on an earlier
+	// rendered line — glamour styles a whole text token at once and the
+	// wrap afterwards doesn't necessarily re-emit at each break.
+	prior := sgrFind.FindAllString(rendered[:at], -1)
 	if len(prior) == 0 {
 		return "\x1b[24;39m" // no enclosing run: just close what we opened
 	}

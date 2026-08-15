@@ -460,3 +460,70 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// A non-URL affix glued to the URL can exceed the pane on its own — a
+// 28-cell "VeryLongGluedPrefixIndeed:" in a 20-cell pane overflows whatever
+// the URL does, and did before this path existed. So the honest invariant
+// here is not "always fits" but "never worse than doing nothing": the
+// hyperlinked render must never be wider than the same input rendered
+// without the inline path at all.
+func TestInlineURLNeverWorseThanUntouched(t *testing.T) {
+	long := "https://example.test/" + strings.Repeat("segment/", 6) + "end"
+	cases := map[string]string{
+		"huge glued prefix": "## S\n\n- a VeryLongGluedPrefixIndeed:" + long + " after\n",
+		"triple blockquote": "## S\n\n> > > before " + long + " after\n",
+		"glued in bq":       "## S\n\n> > > LongPrefixHere:" + long + " after\n",
+		"deep nest":         "## S\n\n- a\n  - b\n    - c\n      - " + long + " after\n",
+	}
+	widest := func(out string) int {
+		w := 0
+		for _, ln := range strings.Split(out, "\n") {
+			if x := xansi.StringWidth(ln); x > w {
+				w = x
+			}
+		}
+		return w
+	}
+	for _, w := range []int{20, 24, 30, 40, 72} {
+		for name, src := range cases {
+			linked, err := renderMarkdown(src, w, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			untouched, err := renderMarkdown(src, w, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, base := widest(linked), widest(untouched)
+			ceiling := w
+			if base > ceiling {
+				ceiling = base // glamour already overflows here; just don't add to it
+			}
+			if got > ceiling {
+				t.Errorf("%s at width %d: %d cells, worse than the %d-cell ceiling (untouched renders %d)",
+					name, w, got, ceiling, base)
+			}
+			if m := residueFind.FindString(visibleText(linked)); m != "" {
+				t.Errorf("%s at width %d: residue %q on screen", name, w, m)
+			}
+		}
+	}
+}
+
+// The enclosing-style replay has to hold on a wrapped line too, not just the
+// first one — that's where a URL lands in the narrow pane this change is for.
+func TestInlineURLRestoresForegroundOnWrappedLine(t *testing.T) {
+	for _, w := range []int{30, 40, 50} {
+		out, err := renderMarkdown(inlineSrc, w, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := strings.Index(out, oscClose)
+		if i < 0 {
+			t.Fatalf("width %d: no hyperlink", w)
+		}
+		if tail := out[i+len(oscClose):]; strings.HasPrefix(tail, "\x1b[24;39m") {
+			t.Errorf("width %d: fell back to the terminal default foreground on a wrapped line", w)
+		}
+	}
+}
