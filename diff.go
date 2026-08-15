@@ -130,11 +130,17 @@ func composeMarked(lines []string, changed map[int]bool, flash bool, width int) 
 	return strings.Join(out, "\n")
 }
 
-// isBulletLine reports whether the line's first visible content is glamour's
-// "• " item prefix (so a "•" inside body text isn't matched).
+// renderedBullet matches the marker glamour draws at the start of an item:
+// "• " for a bullet list, "1. "/"1) " for an ordered one, and the "✓ "/"□ "
+// task markers from styleConfig. Anchored, so a bullet inside body text
+// isn't matched.
+var renderedBullet = regexp.MustCompile(`^(?:•|✓|□|\d{1,9}[.)])\s`)
+
+// isBulletLine reports whether the line's first visible content is one of
+// glamour's item prefixes. Ordered and task items were missed before, so the
+// ▸ change pointer never marked them however much they changed.
 func isBulletLine(ln string) bool {
-	t := strings.TrimLeft(stripANSI(ln), " ")
-	return strings.HasPrefix(t, "• ")
+	return renderedBullet.MatchString(strings.TrimLeft(stripANSI(ln), " "))
 }
 
 // sectionHeaderLines returns the indices of lines that are a rendered H2
