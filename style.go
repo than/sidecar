@@ -182,6 +182,10 @@ type stashedLink struct {
 // markup inside it renders as text, since glamour never sees the construct.
 var mdInlineLinkFind = regexp.MustCompile(`\[([^\]\[]*)\]\((https?://[^)\s]+)\)`)
 
+// autolinkFind matches a markdown autolink whose target is a URL,
+// capturing the URL without its angle brackets.
+var autolinkFind = regexp.MustCompile(`<(https?://[^>\s]+)>`)
+
 // inlineURLFind matches a bare URL anywhere on a line, including mid-
 // sentence. stashBareURLs only ever runs it on lines bareURLLine already
 // rejected, so the two paths never see the same URL.
@@ -415,6 +419,56 @@ func inAnyRange(ranges [][2]int, at int) bool {
 	return false
 }
 
+// stashAutolinks gives "<https://…>" the same treatment as a bare URL: the
+// delimiters are markdown syntax, so they disappear, and the URL becomes a
+// hyperlink with its scheme dropped. glamour renders an autolink as ordinary
+// plain text, which splits at the wrap point exactly like an unhandled bare
+// URL — the gap PR #23 left when it skipped the construct. A non-URL
+// autolink (an email) is left alone; there is nothing to open.
+func stashAutolinks(line string, urls *[]stashedLink, width int) string {
+	matches := autolinkFind.FindAllStringSubmatchIndex(line, -1)
+	if matches == nil {
+		return line
+	}
+	spans := codeSpanRanges(line)
+	var b strings.Builder
+	cursor := 0
+	for _, m := range matches {
+		start, end := m[0], m[1]
+		if inAnyRange(spans, start) {
+			continue
+		}
+		url := line[m[2]:m[3]]
+		display := inlineDisplay(url)
+		if display == "" {
+			continue
+		}
+		wordStart := start
+		for wordStart > 0 && !isSpaceByte(line[wordStart-1]) {
+			wordStart--
+		}
+		wordEnd := end
+		for wordEnd < len(line) && !isSpaceByte(line[wordEnd]) {
+			wordEnd++
+		}
+		affix := visibleWidth(line[wordStart:start]) + visibleWidth(line[end:wordEnd])
+		room := width - indentWidth(line) - affix
+		if room < minInlineReserve || room < 1+len(strconv.Itoa(len(*urls))) {
+			continue
+		}
+		b.WriteString(line[cursor:start])
+		cursor = end
+		idx := len(*urls)
+		*urls = append(*urls, stashedLink{target: url, display: display})
+		b.WriteString(inlinePlaceholder(idx, inlineReserve(display, room)))
+	}
+	if cursor == 0 {
+		return line
+	}
+	b.WriteString(line[cursor:])
+	return b.String()
+}
+
 // stashInlineURLs replaces each bare URL inside line with a reserved-width
 // placeholder, appending the URLs to *urls. URLs that are already markdown
 // syntax — the target of "[label](url)", an "<url>" autolink, or a link
@@ -642,6 +696,7 @@ func stashBareURLs(raw string, width int) (string, []stashedLink) {
 			// Markdown links go first so their href is claimed as a target
 			// rather than being seen as a bare URL by the pass below.
 			line = stashMarkdownLinks(line, &urls, width)
+			line = stashAutolinks(line, &urls, width)
 			lines[i] = stashInlineURLs(line, &urls, width)
 			continue
 		}

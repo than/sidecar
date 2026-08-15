@@ -107,3 +107,45 @@ func TestMarkdownLinkInCodeSpanUntouched(t *testing.T) {
 		t.Errorf("code span content altered:\n%s", visibleText(out))
 	}
 }
+
+// An autolink is markdown syntax for a URL, and glamour renders it as plain
+// splittable text like any other. Same treatment as a bare URL: hyperlinked,
+// scheme dropped, never broken across the wrap.
+func TestAutolinkHyperlinkedAndNeverSplit(t *testing.T) {
+	src := "## S\n\n- Review round done, filed as #303. <https://github.com/o/r/pull/301> After merge, delete stuff.\n"
+	for _, w := range []int{30, 40, 50, 72} {
+		out, err := renderMarkdown(src, w, true)
+		if err != nil {
+			t.Fatalf("width %d: %v", w, err)
+		}
+		got := oscTargets(out)
+		if len(got) != 1 || got[0] != "https://github.com/o/r/pull/301" {
+			t.Errorf("width %d: targets = %v, want the URL", w, got)
+		}
+		vis := visibleText(out)
+		if strings.Contains(vis, "<https") || strings.Contains(vis, ">") {
+			t.Errorf("width %d: autolink delimiters leaked:\n%s", w, vis)
+		}
+		for _, ln := range strings.Split(vis, "\n") {
+			if strings.HasSuffix(strings.TrimRight(ln, " "), "github.") {
+				t.Errorf("width %d: split mid-host:\n%s", w, vis)
+			}
+		}
+		for _, ln := range strings.Split(out, "\n") {
+			if x := xansi.StringWidth(ln); x > w {
+				t.Errorf("width %d: overflow at %d:\n%q", w, x, visibleText(ln))
+			}
+		}
+	}
+}
+
+// A non-URL autolink (an email) is glamour's to render.
+func TestAutolinkEmailUntouched(t *testing.T) {
+	out, err := renderMarkdown("## S\n\n- mail <a@b.test> now\n", 100, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "\x1f") {
+		t.Errorf("placeholder leaked:\n%q", out)
+	}
+}
