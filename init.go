@@ -104,6 +104,15 @@ func runInitBoard(args []string) (code int, open string) {
 			}
 		} else {
 			migrated = migrateLegacyBoard(root) // silent — no prompt on bare init
+			// A linked worktree with no board of its own belongs to the main
+			// checkout's board. Creating a second one here is the split this
+			// warns about everywhere else — wire the note, hook, and viewer
+			// to the board that already exists instead.
+			if _, err := os.Stat(abs); os.IsNotExist(err) {
+				if shared := sharedBoard(); shared != "" {
+					target, abs, isDefaultTarget = shared, shared, false
+				}
+			}
 		}
 	}
 

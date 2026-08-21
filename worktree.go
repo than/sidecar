@@ -96,6 +96,12 @@ func sharedBoard() string {
 // non-empty result means two boards are live at once and whichever one the
 // human is watching is silently partial.
 func splitBoards(abs string) []string {
+	// Only the standard board can be split this way. A legacy root board or
+	// a deliberately separate file (.sidecar/notes.md) is not a competing
+	// copy of anything, and warning about one would be wrong advice.
+	if filepath.Base(abs) != "sidecar.md" || filepath.Base(filepath.Dir(abs)) != sidecarDirName {
+		return nil
+	}
 	dir := filepath.Dir(filepath.Dir(abs)) // strip /.sidecar/sidecar.md
 	root := mainCheckout(dir)
 	if root == "" {

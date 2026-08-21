@@ -198,3 +198,48 @@ func TestBoardLabel(t *testing.T) {
 		}
 	}
 }
+
+// A legacy root board and a deliberately separate file aren't competing
+// copies of the standard board, so neither draws a split warning.
+func TestSplitBoardsOnlyGuardsTheStandardBoard(t *testing.T) {
+	main, wts := fakeRepo(t, "app")
+	writeBoard(t, main, "# main\n")
+
+	legacy := filepath.Join(wts["app"], legacyFile)
+	writeFile(t, legacy, "# legacy\n")
+	if got := splitBoards(legacy); got != nil {
+		t.Errorf("splitBoards(legacy root board) = %v, want none", got)
+	}
+
+	notes := filepath.Join(wts["app"], sidecarDirName, "notes.md")
+	if err := os.MkdirAll(filepath.Dir(notes), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, notes, "# notes\n")
+	if got := splitBoards(notes); got != nil {
+		t.Errorf("splitBoards(a separate board file) = %v, want none", got)
+	}
+}
+
+// `sidecar init` in a fresh worktree adopts the main checkout's board
+// rather than creating the second one it would then warn about.
+func TestRunInitBoardAdoptsMainCheckoutBoard(t *testing.T) {
+	main, wts := fakeRepo(t, "app")
+	shared := writeBoard(t, main, "# board\n\n## 🧠 Needs you\n\n- alpha\n")
+
+	withWorkDir(t, wts["app"], func() {
+		out := captureStdout(t, func() {
+			if code, _ := runInitBoard([]string{"--yes", "--no-claude"}); code != 0 {
+				t.Fatalf("init exited %d", code)
+			}
+		})
+		if !strings.Contains(out, shared) {
+			t.Errorf("init didn't point at the main checkout's board:\n%s", out)
+		}
+	})
+
+	local := filepath.Join(wts["app"], sidecarDirName, "sidecar.md")
+	if _, err := os.Stat(local); err == nil {
+		t.Errorf("init created a second board at %s", local)
+	}
+}
