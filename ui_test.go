@@ -376,6 +376,24 @@ func TestStatusBarWidth(t *testing.T) {
 	}
 }
 
+// Two worktrees produce two boards with the same file name; the status bar
+// carries the project directory so they read as different files.
+func TestStatusBarNamesTheProjectDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "adjustmunk", sidecarDirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "sidecar.md")
+	writeFile(t, path, "# T\n")
+
+	m := testModel(t, path)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	bar := stripANSI(next.(model).statusBar())
+	if !strings.Contains(bar, "adjustmunk/sidecar.md") {
+		t.Errorf("status bar = %q, want the project directory in the name", bar)
+	}
+}
+
 // A resize before any content change must not mark anything (regression:
 // hasBaseline true + empty prevBaseline diffed against the whole document).
 func TestUpdatePointerResizeBeforeChangeUnmarked(t *testing.T) {

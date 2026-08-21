@@ -462,7 +462,7 @@ func (m model) View() string {
 }
 
 func (m model) statusBar() string {
-	name := filepath.Base(m.path)
+	name := boardLabel(m.path)
 
 	var updated string
 	switch {
@@ -480,6 +480,17 @@ func (m model) statusBar() string {
 	info := "· " + updated
 	pct := fmt.Sprintf(" %3.0f%% ", m.vp.ScrollPercent()*100)
 
+	// The name carries its parent directory so two boards in two worktrees
+	// are visibly different files. In a narrow pane that's the first thing
+	// to give: drop to the bare file name, then truncate, so the bar is
+	// still exactly the pane width.
+	if visibleWidth(left)+visibleWidth(pct) > m.width {
+		left = " 🚗 " + filepath.Base(m.path) + " "
+	}
+	if visibleWidth(left)+visibleWidth(pct) > m.width {
+		left = truncateTo(left, max(0, m.width-visibleWidth(pct)))
+	}
+
 	pad := m.width - visibleWidth(left) - visibleWidth(info) - visibleWidth(pct)
 	if pad < 0 {
 		info = truncateTo(info, max(0, m.width-visibleWidth(left)-visibleWidth(pct)))
@@ -492,6 +503,23 @@ func (m model) statusBar() string {
 	}
 	return nameStyle.Render(left) +
 		statusStyle.Render(info+strings.Repeat(" ", pad)+pct)
+}
+
+// boardLabel names the board the way a human tells two of them apart: the
+// project directory plus the file name. `.sidecar` is the home every board
+// shares, so it's the directory above it that carries the identity —
+// munks/sidecar.md and adjustmunk/sidecar.md rather than two sidecar.mds.
+func boardLabel(path string) string {
+	base := filepath.Base(path)
+	dir := filepath.Dir(path)
+	if filepath.Base(dir) == sidecarDirName {
+		dir = filepath.Dir(dir)
+	}
+	parent := filepath.Base(dir)
+	if parent == "." || parent == string(filepath.Separator) {
+		return base
+	}
+	return parent + "/" + base
 }
 
 func truncateTo(s string, w int) string {

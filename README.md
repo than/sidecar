@@ -11,6 +11,8 @@ sidecar --no-flash [file]  disable the subtle change-flash (▸ still shows)
 
 Sidecar keeps its state in `.sidecar/` — the board (`sidecar.md`) and the last-turn snapshot (`previous.md`) — excluded from git via `.git/info/exclude`.
 
+One board per repository, not per worktree. The default board path is relative to the current directory, so a repository with a worktree per app would otherwise give each worktree its own board — the human watches one file while an agent maintains another, and both read it as the other side going quiet. A linked worktree with no board of its own uses the main checkout's, the status bar names the board's project directory rather than just `sidecar.md`, and `sidecar diff` warns when a second board is live in the same repository.
+
 ## Why two panes
 
 In a long agent session, the status that matters — what’s done, what’s blocked, what shipped — scrolls out of view at the top of the transcript. Sidecar keeps it in place.
@@ -41,7 +43,7 @@ Two flags opt out of a default: `--no-claude` skips the `CLAUDE.md` note and rec
 - Points at what changed: on reload, a changed bullet's `•` becomes a bright
   `▸` (until the next change), and changed lines get a brief, subtle background
   flash. Disable the flash with `--no-flash`.
-- Shows a thin status bar: the filename, the time since the last update, and the scroll percentage.
+- Shows a thin status bar: the board's project directory and file name, the time since the last update, and the scroll percentage. In a pane too narrow for both, the directory drops first.
 
 ## Rendering style
 

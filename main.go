@@ -17,7 +17,9 @@ var version = "dev"
 
 const help = `sidecar — live-updating markdown viewer for a terminal side pane
 
-usage: sidecar [file.md]         (default: .sidecar/sidecar.md)
+usage: sidecar [file.md]         (default: .sidecar/sidecar.md, or the
+                                 main checkout's board in a git worktree
+                                 that has none of its own)
        sidecar init [file.md]    create the board, wire it into Claude Code,
                                  and open the viewer on it (a piped or CI run
                                  prints the command instead)

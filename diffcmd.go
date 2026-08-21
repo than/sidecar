@@ -63,6 +63,13 @@ func runDiff(args []string) int {
 		return 0
 	}
 
+	// Name the file. The board path is relative to cwd, so an agent in one
+	// worktree and a human in another each see a board and neither can tell
+	// they aren't the same one.
+	fmt.Println("board: " + abs)
+	for _, other := range splitBoards(abs) {
+		fmt.Println("⚠ a second board exists at " + other + " — this repo has more than one, so whichever the human watches is partial. Ask which board to keep.")
+	}
 	for _, line := range cappedDiffLines(diffLines(string(prev), string(raw))) {
 		fmt.Println(line)
 	}
@@ -89,7 +96,8 @@ func cappedDiffLines(lines []string) []string {
 }
 
 // defaultBoardPath resolves the board for bare invocations: the .sidecar/
-// home when present, the legacy root file when that's all there is, and the
+// home when present, the legacy root file when that's all there is, the main
+// checkout's board when cwd is a linked worktree without one, and the
 // .sidecar/ home again as the target for fresh setups.
 func defaultBoardPath() string {
 	home := filepath.Join(sidecarDirName, "sidecar.md")
@@ -98,6 +106,12 @@ func defaultBoardPath() string {
 	}
 	if _, err := os.Stat(legacyFile); err == nil {
 		return legacyFile
+	}
+	// No board here. A linked git worktree is a place to do the work, not a
+	// separate project, so inherit the main checkout's board rather than
+	// starting a second one the human isn't watching.
+	if shared := sharedBoard(); shared != "" {
+		return shared
 	}
 	return home
 }
