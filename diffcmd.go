@@ -63,6 +63,10 @@ func runDiff(args []string) int {
 		return 0
 	}
 
+	// Name the file. The board path is relative to cwd, so an agent working
+	// in one directory and a human watching another each see a board and
+	// neither can tell they aren't the same one.
+	fmt.Println("board: " + abs)
 	for _, line := range cappedDiffLines(diffLines(string(prev), string(raw))) {
 		fmt.Println(line)
 	}

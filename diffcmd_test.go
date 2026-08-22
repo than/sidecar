@@ -220,11 +220,15 @@ func TestRunDiffCapsLargeOutput(t *testing.T) {
 			t.Fatalf("test setup didn't exceed the cap: %d raw diff lines", len(full))
 		}
 
-		// 100 capped lines + 1 tail line + 1 closing reminder line.
-		wantTotal := 100 + 1 + 1
+		// 1 board line + 100 capped lines + 1 tail line + 1 closing reminder.
+		wantTotal := 1 + 100 + 1 + 1
 		if len(lines) != wantTotal {
 			t.Fatalf("printed %d lines, want %d:\n%s", len(lines), wantTotal, out)
 		}
+		if !strings.HasPrefix(lines[0], "board: ") || !strings.HasSuffix(lines[0], "sidecar.md") {
+			t.Errorf("first line = %q, want the resolved board path", lines[0])
+		}
+		lines = lines[1:]
 		for i := 0; i < 100; i++ {
 			if lines[i] != full[i] {
 				t.Errorf("line %d = %q, want %q", i, lines[i], full[i])
