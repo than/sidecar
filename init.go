@@ -77,6 +77,9 @@ func runInitBoard(args []string) (code int, open string) {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
 		return 1, ""
 	}
+	if refuseSymlinkedBoard(abs, "sidecar init") {
+		return 1, ""
+	}
 
 	migrated := false
 	keptLegacyBoard := false
@@ -87,6 +90,15 @@ func runInitBoard(args []string) (code int, open string) {
 		// repo, a root-level SIDECAR.md is left alone rather than migrated
 		// out from under the directory the user actually asked to init.
 		root := filepath.Dir(filepath.Dir(abs))
+		// Both branches below act on a legacy root board only while the new
+		// home is empty: migration renames it into .sidecar/, where a symlink
+		// arrives as a symlink, and --keep-board points init straight at it.
+		// Refuse before either one touches a linked board.
+		if _, err := os.Lstat(filepath.Join(root, sidecarDirName, "sidecar.md")); os.IsNotExist(err) {
+			if refuseSymlinkedBoard(filepath.Join(root, legacyFile), "sidecar init") {
+				return 1, ""
+			}
+		}
 		if keepBoard {
 			// Keep the legacy root board right where it is — but only
 			// retarget init at it when .sidecar/sidecar.md doesn't already
@@ -341,6 +353,10 @@ func claudeNote(rel string, sections []Section) string {
 		"%[2]s" +
 		"\n%[3]s" +
 		"%[4]s" +
+		"\nKeep one board per directory. Never symlink `%[1]s` or the\n" +
+		"`.sidecar/` directory to another checkout's — every session writing to\n" +
+		"one file turns the queue into noise. Run `sidecar init` in the other\n" +
+		"directory to give it a board of its own.\n" +
 		"\nThe board is a private channel between you and the human. Never mention\n" +
 		"it, its path, or sidecar itself in commit messages, PR titles or bodies,\n" +
 		"issue comments, or any other shared artifact — those readers don't have\n" +
@@ -660,6 +676,14 @@ func offerCreate(abs string) {
 	if !stdinIsTerminal() {
 		return
 	}
+	// A dangling link is the only symlinked board that reaches here — a live
+	// one Stats fine above and the viewer just reads it. Scaffolding through
+	// the link would put this directory's board in another directory. Below
+	// the terminal guard, so a piped launch that was never going to write
+	// stays silent.
+	if refuseSymlinkedBoard(abs, "sidecar") {
+		return
+	}
 	fmt.Printf("%s doesn't exist yet. Create it? [Y/n]: ", filepath.Base(abs))
 	switch readChoice() {
 	case "n", "no":
@@ -892,6 +916,52 @@ func repoRootForBoard(boardAbs string) string {
 		dir = filepath.Dir(dir)
 	}
 	return repoRoot(dir)
+}
+
+// symlinkedBoardPath returns the link standing between init and a board of
+// this directory's own: the board file itself, or the .sidecar/ home it sits
+// in. Nothing else in the path counts — a project directory behind a symlink
+// is ordinary, so only what sidecar creates is checked. Lstat, never Stat: a
+// dangling link reports NotExist, and init would scaffold straight through
+// it into the link's target.
+func symlinkedBoardPath(abs string) string {
+	if fi, err := os.Lstat(abs); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return abs
+	}
+	dir := filepath.Dir(abs)
+	if filepath.Base(dir) != sidecarDirName {
+		return ""
+	}
+	if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return dir
+	}
+	return ""
+}
+
+// refuseSymlinkedBoard reports whether a symlink stands in for the board at
+// abs, printing what it is and what to do about it under prog's name.
+// Boards are per-directory: a link points two checkouts at one file, so both
+// sessions write their work into a single queue.
+func refuseSymlinkedBoard(abs, prog string) bool {
+	link := symlinkedBoardPath(abs)
+	if link == "" {
+		return false
+	}
+	name := link
+	if cwd, err := os.Getwd(); err == nil {
+		if rel, rerr := filepath.Rel(cwd, link); rerr == nil && !strings.HasPrefix(rel, "..") {
+			name = rel
+		}
+	}
+	dest, err := os.Readlink(link)
+	if err != nil {
+		dest = "another location"
+	}
+	fmt.Fprintf(os.Stderr, "%s: %s is a symlink to %s — nothing written.\n", prog, name, dest)
+	fmt.Fprintln(os.Stderr, "Boards are per-directory: a shared board merges every session's work into one queue.")
+	fmt.Fprintln(os.Stderr, "Remove the symlink, then run 'sidecar init' again — the CLAUDE.md note and the")
+	fmt.Fprintln(os.Stderr, "reconcile hook stay as they are until you do.")
+	return true
 }
 
 // git runs a git command in dir and returns trimmed stdout; ok is false if
