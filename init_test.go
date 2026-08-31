@@ -1304,3 +1304,161 @@ func TestWritersReportNeedsAttention(t *testing.T) {
 		}
 	})
 }
+
+// A symlinked board is refused outright. Boards are per-directory: a link
+// points two checkouts at one file, and every session writing there piles
+// into a single queue.
+func TestRunInitRefusesSymlinkedBoardFile(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.md")
+	if err := os.WriteFile(real, []byte("# Real\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "board.md")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+
+	var code int
+	out := captureStderr(t, func() { code = runInit([]string{link}) })
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 for a symlinked board", code)
+	}
+	if !strings.Contains(out, "symlink") {
+		t.Errorf("stderr = %q, want it to name the symlink", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Error("wrote CLAUDE.md after refusing")
+	}
+	data, _ := os.ReadFile(real)
+	if string(data) != "# Real\n" {
+		t.Errorf("wrote through the symlink: %q", data)
+	}
+}
+
+// The .sidecar/ directory itself is the other half of the same mistake —
+// linking the board's home shares every board inside it.
+func TestRunInitRefusesSymlinkedSidecarDir(t *testing.T) {
+	dir := t.TempDir()
+	shared := filepath.Join(dir, "shared")
+	if err := os.MkdirAll(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shared, filepath.Join(dir, sidecarDirName)); err != nil {
+		t.Fatal(err)
+	}
+
+	var code int
+	captureStderr(t, func() { code = runInit([]string{filepath.Join(dir, sidecarDirName, "sidecar.md")}) })
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 for a symlinked %s/", code, sidecarDirName)
+	}
+	if _, err := os.Stat(filepath.Join(shared, "sidecar.md")); !os.IsNotExist(err) {
+		t.Error("scaffolded a board into the link's target")
+	}
+}
+
+// A dangling link is the dangerous case: os.Stat fails, so without an Lstat
+// check init falls through to scaffold and writes the board at the link's
+// target instead of here.
+func TestRunInitRefusesDanglingBoardSymlink(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, sidecarDirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(dir, "gone.md")
+	if err := os.Symlink(gone, filepath.Join(dir, sidecarDirName, "sidecar.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	var code int
+	captureStderr(t, func() { code = runInit([]string{filepath.Join(dir, sidecarDirName, "sidecar.md")}) })
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 for a dangling board symlink", code)
+	}
+	if _, err := os.Stat(gone); !os.IsNotExist(err) {
+		t.Error("scaffolded through the dangling link")
+	}
+}
+
+// Migration renames a legacy root board into .sidecar/ — a symlink moves as
+// a symlink, so the check has to run before the move, not after it.
+func TestRunInitRefusesSymlinkedLegacyBoard(t *testing.T) {
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-q")
+	elsewhere := t.TempDir()
+	real := filepath.Join(elsewhere, "sidecar.md")
+	if err := os.WriteFile(real, []byte("# Shared\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(dir, legacyFile)); err != nil {
+		t.Fatal(err)
+	}
+
+	var code int
+	withWorkDir(t, dir, func() {
+		captureStderr(t, func() { code = runInit([]string{"--yes"}) })
+	})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 for a symlinked legacy board", code)
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, legacyFile)); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("legacy symlink moved: %v, %v", fi, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, sidecarDirName, "sidecar.md")); !os.IsNotExist(err) {
+		t.Error("migrated the symlink into .sidecar/")
+	}
+}
+
+// A real board reached through a symlinked parent — a project directory
+// behind a link — is ordinary and must still init. Only the board and its
+// own .sidecar/ home are checked.
+func TestRunInitAllowsBoardUnderSymlinkedParent(t *testing.T) {
+	dir := t.TempDir()
+	project := filepath.Join(dir, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(project, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := runInit([]string{filepath.Join(link, "notes.md")}); code != 0 {
+		t.Fatalf("exit = %d, want 0 for a real board under a symlinked parent", code)
+	}
+	if _, err := os.Stat(filepath.Join(project, "notes.md")); err != nil {
+		t.Errorf("board not created: %v", err)
+	}
+}
+
+// The CLAUDE.md note carries the rule, so an agent knows not to create the
+// symlink init refuses.
+func TestClaudeNoteCarriesPerDirectoryRule(t *testing.T) {
+	note := claudeNote(filepath.Join(sidecarDirName, "sidecar.md"), defaultSections())
+	for _, want := range []string{"Never symlink", "sidecar init"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note missing %q:\n%s", want, note)
+		}
+	}
+}
+
+// The viewer's create prompt scaffolds too, and a dangling link is the one
+// symlinked board that reaches it — refuse there rather than write the board
+// into the link's target directory.
+func TestOfferCreateRefusesDanglingBoardSymlink(t *testing.T) {
+	dir := t.TempDir()
+	gone := filepath.Join(dir, "elsewhere", "sidecar.md")
+	link := filepath.Join(dir, "board.md")
+	if err := os.Symlink(gone, link); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStderr(t, func() { offerCreate(link) })
+	if !strings.Contains(out, "symlink") {
+		t.Errorf("stderr = %q, want the symlink refusal", out)
+	}
+	if _, err := os.Stat(gone); !os.IsNotExist(err) {
+		t.Error("scaffolded through the dangling link")
+	}
+}

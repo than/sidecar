@@ -31,6 +31,8 @@ Any split-pane setup works — [Supacode], tmux, or your terminal’s built-in s
 
 Two flags opt out of a default: `--no-claude` skips the `CLAUDE.md` note and reconcile hook; `--keep-board` leaves a legacy root `SIDECAR.md` where it is and points `init` at it directly, instead of migrating to `.sidecar/` (a no-op when `.sidecar/sidecar.md` already exists). `--yes`/`-y` skip the section picker described next, and keep `init` non-interactive end to end: from a terminal, a bare `sidecar init` opens the viewer on the board it just created, while `--yes` returns to the shell for scripts and muscle memory that need it to. Creating a brand-new board from an interactive terminal still opens a short picker for choosing its sections; pass a custom path (`sidecar init notes.md`) to place the board somewhere other than `.sidecar/sidecar.md`, which still gets the same automatic exclude, note, and hook.
 
+Boards are per-directory. `sidecar init` refuses a board that is a symlink — the file itself, or the `.sidecar/` home it sits in — and writes nothing, because a link points two checkouts at one queue and every session's work piles into the same file. Run `sidecar init` in the other directory to give it a board of its own. The viewer still reads a symlinked board that already exists, so an existing setup keeps working.
+
 ## What it does
 
 - Renders Markdown with [glamour] and re-renders the moment the file changes. Sidecar watches the parent directory with fsnotify and a 100-millisecond debounce, so it handles atomic rename-swaps, deletes, and recreates — and waits quietly when the file doesn’t exist yet.
