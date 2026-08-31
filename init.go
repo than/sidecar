@@ -353,9 +353,9 @@ func claudeNote(rel string, sections []Section) string {
 		"%[2]s" +
 		"\n%[3]s" +
 		"%[4]s" +
-		"\nKeep one board per directory. Never symlink `%[1]s` or its\n" +
-		"directory to another checkout's board — every session writing to one\n" +
-		"file turns the queue into noise. Run `sidecar init` in the other\n" +
+		"\nKeep one board per directory. Never symlink `%[1]s` or the\n" +
+		"`.sidecar/` directory to another checkout's — every session writing to\n" +
+		"one file turns the queue into noise. Run `sidecar init` in the other\n" +
 		"directory to give it a board of its own.\n" +
 		"\nThe board is a private channel between you and the human. Never mention\n" +
 		"it, its path, or sidecar itself in commit messages, PR titles or bodies,\n" +
@@ -673,13 +673,15 @@ func offerCreate(abs string) {
 	if _, err := os.Stat(abs); err == nil {
 		return // already there
 	}
-	// A dangling link is the only symlinked board that reaches here — a live
-	// one Stats fine above and the viewer just reads it. Scaffolding through
-	// the link would put this directory's board in another directory.
-	if refuseSymlinkedBoard(abs, "sidecar") {
+	if !stdinIsTerminal() {
 		return
 	}
-	if !stdinIsTerminal() {
+	// A dangling link is the only symlinked board that reaches here — a live
+	// one Stats fine above and the viewer just reads it. Scaffolding through
+	// the link would put this directory's board in another directory. Below
+	// the terminal guard, so a piped launch that was never going to write
+	// stays silent.
+	if refuseSymlinkedBoard(abs, "sidecar") {
 		return
 	}
 	fmt.Printf("%s doesn't exist yet. Create it? [Y/n]: ", filepath.Base(abs))
@@ -956,8 +958,9 @@ func refuseSymlinkedBoard(abs, prog string) bool {
 		dest = "another location"
 	}
 	fmt.Fprintf(os.Stderr, "%s: %s is a symlink to %s — nothing written.\n", prog, name, dest)
-	fmt.Fprintln(os.Stderr, "Boards are per-directory. A shared board merges every session's work into one queue.")
-	fmt.Fprintln(os.Stderr, "Remove the symlink, then run 'sidecar init' for a board of this directory's own.")
+	fmt.Fprintln(os.Stderr, "Boards are per-directory: a shared board merges every session's work into one queue.")
+	fmt.Fprintln(os.Stderr, "Remove the symlink, then run 'sidecar init' again — the CLAUDE.md note and the")
+	fmt.Fprintln(os.Stderr, "reconcile hook stay as they are until you do.")
 	return true
 }
 

@@ -1455,10 +1455,19 @@ func TestOfferCreateRefusesDanglingBoardSymlink(t *testing.T) {
 	}
 
 	out := captureStderr(t, func() { offerCreate(link) })
-	if !strings.Contains(out, "symlink") {
-		t.Errorf("stderr = %q, want the symlink refusal", out)
-	}
 	if _, err := os.Stat(gone); !os.IsNotExist(err) {
 		t.Error("scaffolded through the dangling link")
+	}
+	if !stdinIsTerminal() {
+		// Without a terminal offerCreate never prompts, so no write was
+		// pending and the refusal has nothing to announce. The silence is
+		// the assertion.
+		if out != "" {
+			t.Errorf("stderr = %q, want silence on a non-interactive launch", out)
+		}
+		return
+	}
+	if !strings.Contains(out, "symlink") {
+		t.Errorf("stderr = %q, want the symlink refusal", out)
 	}
 }
