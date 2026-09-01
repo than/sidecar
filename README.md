@@ -43,7 +43,7 @@ Boards are per-directory. `sidecar init` refuses a board that is a symlink — t
 - Points at what changed: on reload, a changed bullet's `•` becomes a bright
   `▸` (until the next change), and changed lines get a brief, subtle background
   flash. Disable the flash with `--no-flash`.
-- Shows a thin status bar: the filename, the time since the last update, and the scroll percentage.
+- Shows a thin status bar: the board's project directory and file name, the time since the last update, and the scroll percentage. The board path is relative to the current directory, so two checkouts of a project — or two git worktrees — each have their own board; naming the directory makes it obvious which one is open. In a pane too narrow for both, the directory drops first.
 
 ## Rendering style
 
