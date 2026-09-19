@@ -100,6 +100,9 @@ func main() {
 func runViewer(abs string, noFlash bool) int {
 	p := tea.NewProgram(newModel(abs, noFlash),
 		tea.WithAltScreen(),
+		// The renderer wakes every frame even when idle; the default 60fps
+		// costs ~0.5% CPU per open board. 10fps keeps scrolling responsive.
+		tea.WithFPS(10),
 		// No mouse capture: keeps the terminal's native text selection and
 		// clickable links working. Scroll with the keyboard (see keys below).
 	)
