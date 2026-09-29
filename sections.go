@@ -146,7 +146,7 @@ func entryStyleRules(sections []Section, bullet string) string {
 		"two sentences of detail — more belongs in the PR or issue you link",
 		"bare URLs, each on its own line",
 		"one `Next:` line naming the single next action",
-		"optionally an indented `Ask:` line with options separated by `|`, which the human answers with an `Answer:` line",
+		"optionally an indented `Ask:` line with one narrative question, which the human answers with an `Answer:` line",
 		"entry text on one line — never hard-wrap; the viewer wraps to the pane and source newlines become visible breaks",
 	} {
 		b.WriteString(bullet + r + "\n")
