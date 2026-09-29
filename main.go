@@ -29,12 +29,20 @@ usage: sidecar [file.md]         (default: .sidecar/sidecar.md)
        sidecar diff [file.md]    print board changes since the last run
        sidecar --static [file]   render once to stdout and exit (no TUI)
        sidecar --no-flash [file] disable the subtle change-flash (▸ still shows)
+       sidecar --no-mouse [file] start without mouse capture (native text selection)
 
-keys:  j/k, arrows, PgUp/PgDn                scroll
+keys:  arrows, PgUp/PgDn, wheel             scroll
+       j / k                                move between items (scrolls when there are none)
        g / G                                top / bottom
        tab / shift+tab                      move between sections
        enter / space                        collapse / expand section
+       click a • bullet, or  space          tick it ✓ (again to untick)
+       click a ? question, or  enter        answer the agent, in your own words
+       } / {                                next / previous open question
+       u                                    undo the last change made from the viewer
+       esc                                  deselect
        r                                    force reload
+       M                                    mouse on/off. On by default; Shift-drag selects text.
        q                                    quit
 
 The file doesn't have to exist yet — sidecar waits for it and renders the
@@ -61,7 +69,7 @@ func main() {
 			if code != 0 || open == "" {
 				os.Exit(code)
 			}
-			os.Exit(runViewer(open, false))
+			os.Exit(runViewer(open, false, false))
 		case "diff":
 			os.Exit(runDiff(os.Args[2:]))
 		}
@@ -69,11 +77,13 @@ func main() {
 
 	// Viewer mode: an optional file path plus the --no-flash flag, any order.
 	path := defaultBoardPath()
-	noFlash := false
+	noFlash, noMouse := false, false
 	for _, a := range os.Args[1:] {
 		switch {
 		case a == "--no-flash":
 			noFlash = true
+		case a == "--no-mouse":
+			noMouse = true
 		case strings.HasPrefix(a, "-"):
 			fmt.Fprintf(os.Stderr, "sidecar: unknown flag %q\n\n", a)
 			fmt.Print(help)
@@ -91,21 +101,29 @@ func main() {
 
 	offerCreate(abs) // if missing and interactive, offer to scaffold before opening
 
-	os.Exit(runViewer(abs, noFlash))
+	os.Exit(runViewer(abs, noFlash, noMouse))
 }
 
 // runViewer opens the live viewer on abs and blocks until the human quits.
 // Shared by viewer mode and by `sidecar init`, which opens the board it just
 // created rather than printing a command to run.
-func runViewer(abs string, noFlash bool) int {
-	p := tea.NewProgram(newModel(abs, noFlash),
+func runViewer(abs string, noFlash, noMouse bool) int {
+	model := newModel(abs, noFlash)
+	opts := []tea.ProgramOption{
 		tea.WithAltScreen(),
 		// The renderer wakes every frame even when idle; the default 60fps
 		// costs ~0.5% CPU per open board. 10fps keeps scrolling responsive.
 		tea.WithFPS(10),
-		// No mouse capture: keeps the terminal's native text selection and
-		// clickable links working. Scroll with the keyboard (see keys below).
-	)
+	}
+	// Mouse capture is on by default so buttons, checkboxes, and section
+	// headers respond to clicks. It costs the terminal's plain drag-to-select
+	// (hold Shift, or Option in iTerm2, to select anyway); --no-mouse starts
+	// without it and M toggles it while running.
+	if !noMouse {
+		model.mouse = true
+		opts = append(opts, tea.WithMouseAllMotion())
+	}
+	p := tea.NewProgram(model, opts...)
 	go watchFile(abs, p.Send)
 
 	if _, err := p.Run(); err != nil {

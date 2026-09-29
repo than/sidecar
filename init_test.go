@@ -159,9 +159,13 @@ func TestReconcileHookMergesAndUpgrades(t *testing.T) {
 	if !ok || len(ups) != 1 {
 		t.Fatalf("want exactly 1 UserPromptSubmit entry, got:\n%s", data)
 	}
-	// The old sidecar SessionStart hook should be gone (only keep-me remains).
-	if n := strings.Count(string(data), hookSentinel); n != 1 {
-		t.Errorf("sentinel appears %d times, want 1 (old hook not replaced):\n%s", n, data)
+	// The old sidecar SessionStart hook should be gone (only keep-me remains);
+	// what's left is the per-prompt hook plus the mid-turn PostToolUse hook.
+	if n := strings.Count(string(data), hookSentinel); n != 2 {
+		t.Errorf("sentinel appears %d times, want 2 (old hook not replaced, or a duplicate):\n%s", n, data)
+	}
+	if ptu, ok := hooks["PostToolUse"].([]any); !ok || len(ptu) != 1 {
+		t.Errorf("want exactly 1 PostToolUse entry after two runs, got:\n%s", data)
 	}
 }
 

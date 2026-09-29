@@ -146,6 +146,7 @@ func entryStyleRules(sections []Section, bullet string) string {
 		"two sentences of detail — more belongs in the PR or issue you link",
 		"bare URLs, each on its own line",
 		"one `Next:` line naming the single next action",
+		"optionally an indented `Ask:` line with one narrative question, which the human answers with an `Answer:` line",
 		"entry text on one line — never hard-wrap; the viewer wraps to the pane and source newlines become visible breaks",
 	} {
 		b.WriteString(bullet + r + "\n")
@@ -159,6 +160,7 @@ func entryStyleRules(sections []Section, bullet string) string {
 		}
 		b.WriteString(" until it needs a decision, and then the `Next:` line asks for that decision.\n")
 	}
+	b.WriteString("\nWhen a turn ends, leave its result as an entry and, under it, an indented `Ask:` line with one narrative question — \"what did you change on your side?\", \"how did the deploy go?\" — never a yes/no. The human sees it as `? …` and answers under it; the answer arrives as an `Answer:` line, and sidecar's hook reports it after your next tool call, so read it, act on it, then clear the `Ask:` and `Answer:` lines or move the entry. The human can also click any entry's bullet, which turns it to `✓` (`- [x]`): read that as \"I did this\". The human never moves entries between sections — filing them stays yours.\n")
 	return b.String()
 }
 

@@ -66,9 +66,9 @@ func semanticDiff(old, new Board) []string {
 		ot, nt := sectionTag(o.section), sectionTag(n.section)
 		switch {
 		case ot != nt:
-			moved = append(moved, fmt.Sprintf("moved %s→%s: %q", ot, nt, title(n.item.Key)))
+			moved = append(moved, fmt.Sprintf("moved %s→%s: %q%s", ot, nt, title(n.item.Key), humanChange(o.item, n.item)))
 		case o.item.Raw != n.item.Raw:
-			edited = append(edited, fmt.Sprintf("edited %s: %q", nt, title(n.item.Key)))
+			edited = append(edited, fmt.Sprintf("edited %s: %q%s", nt, title(n.item.Key), humanChange(o.item, n.item)))
 		}
 	}
 
@@ -360,4 +360,28 @@ func hunkHeader(o, dels, n, adds int) string {
 		return fmt.Sprintf("%d,%d", pos, count)
 	}
 	return fmt.Sprintf("@@ -%s +%s @@", side(o, dels), side(n, adds))
+}
+
+// humanChange names the reader-facing state changes the viewer writes — a
+// ticked bullet or a reply — so the agent sees the decision in the diff
+// itself, not just that the item changed.
+func humanChange(old, new BoardItem) string {
+	var out string
+	switch ot, nt := isTicked(old), isTicked(new); {
+	case !ot && nt:
+		out += " — ticked"
+	case ot && !nt:
+		out += " — unticked"
+	}
+	if a := answerOf(new); a != answerOf(old) && a != "" {
+		out += fmt.Sprintf(" — replied %q", truncateRunes(a, 400))
+	}
+	return out
+}
+
+func truncateRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
 }

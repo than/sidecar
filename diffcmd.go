@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"os"
@@ -13,23 +14,35 @@ import (
 )
 
 func runDiff(args []string) int {
-	if len(args) > 1 {
+	operands := 0
+	for _, a := range args {
+		if a != "--mid-turn" {
+			operands++
+		}
+	}
+	if operands > 1 {
 		fmt.Fprintln(os.Stderr, "sidecar diff: too many arguments")
 		return 2
 	}
 	path := defaultBoardPath()
-	if len(args) > 0 {
-		switch args[0] {
-		case "-h", "--help":
-			fmt.Println("usage: sidecar diff [file.md]")
+	midTurn, havePath := false, false
+	for _, a := range args {
+		switch {
+		case a == "-h" || a == "--help":
+			fmt.Println("usage: sidecar diff [--mid-turn] [file.md]")
 			fmt.Println("Prints board changes since the last run.")
+			fmt.Println("--mid-turn prints only the human's replies and ticks, as PostToolUse hook JSON, and stays silent otherwise.")
 			return 0
+		case a == "--mid-turn":
+			midTurn = true
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintf(os.Stderr, "sidecar diff: unknown flag %q\n", a)
+			return 2
+		case havePath:
+			fmt.Fprintln(os.Stderr, "sidecar diff: too many arguments")
+			return 2
 		default:
-			if strings.HasPrefix(args[0], "-") {
-				fmt.Fprintf(os.Stderr, "sidecar diff: unknown flag %q\n", args[0])
-				return 2
-			}
-			path = args[0]
+			path, havePath = a, true
 		}
 	}
 	abs, err := filepath.Abs(expandTilde(path))
@@ -61,6 +74,9 @@ func runDiff(args []string) int {
 	}
 	if bytes.Equal(prev, raw) {
 		return 0
+	}
+	if midTurn {
+		return midTurnReport(path, snap, string(prev), string(raw))
 	}
 
 	for _, line := range cappedDiffLines(diffLines(string(prev), string(raw))) {
@@ -192,4 +208,35 @@ func closingReminder(rel, raw string) string {
 		}
 	}
 	return reconcileMessageLabels(rel, labels)
+}
+
+// midTurnReport is the PostToolUse half of the hook cycle: it surfaces only
+// what the human did in the viewer — a reply, a tick — as hook JSON that adds
+// context to the running turn. Anything else stays silent and leaves the
+// snapshot alone, so the per-prompt diff still reports it. The snapshot moves
+// only when something was reported, so the same reply is never delivered twice.
+func midTurnReport(path, snap, prev, raw string) int {
+	ob, ok1 := parseBoard(prev)
+	nb, ok2 := parseBoard(raw)
+	if !ok1 || !ok2 {
+		return 0
+	}
+	var lines []string
+	for _, l := range semanticDiff(ob, nb) {
+		if strings.Contains(l, " — replied ") || strings.Contains(l, " — ticked") || strings.Contains(l, " — unticked") {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) == 0 {
+		return 0
+	}
+	msg := "The human answered on the sidecar board while you worked:\n" + strings.Join(cappedDiffLines(lines), "\n") +
+		"\nRead " + path + ", act on the reply, then clear the item's Ask: and Answer: lines or move it."
+	out, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{
+		"hookEventName":     "PostToolUse",
+		"additionalContext": msg,
+	}})
+	fmt.Println(string(out))
+	writeSnapshot(snap, []byte(raw))
+	return 0
 }
