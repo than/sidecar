@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 const buttonBoard = `# Board
@@ -28,30 +30,50 @@ func buttonModel(t *testing.T) (model, string) {
 	return testModel(t, p), p
 }
 
-func TestEveryOpenItemGetsAnActionRowBelowIt(t *testing.T) {
-	raw := "## 🧠 Needs you\n\n- plain\n- has detail\n  more\n\n## ✅ Done\n\n- finished\n"
+// plainLines renders a board the way the viewer does and strips the color.
+func plainLines(t *testing.T, raw string, collapsed map[string]bool, width int) []string {
+	t.Helper()
 	b, _ := parseBoard(raw)
-	got := buttonize(raw, b)
-	row := "  `[ ✅ Done ]` `[ 💬 Reply ]`"
-	if strings.Count(got, row) != 2 {
-		t.Fatalf("want a row under each of the 2 open items, none under Done:\n%s", got)
+	lines, err := renderBoardLines(displayText(raw, b, collapsed), b, width)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(got, "- plain\n"+row+"\n- has detail\n  more\n"+row+"\n") {
-		t.Fatalf("rows must sit directly below their item:\n%s", got)
+	for i := range lines {
+		lines[i] = strings.TrimRight(stripANSI(lines[i]), " ")
 	}
+	return lines
 }
 
+func TestEveryOpenItemGetsAnActionRowBelowIt(t *testing.T) {
+	raw := "## 🧠 Needs you\n\n- plain\n- has detail\n  more\n\n## ✅ Done\n\n- finished\n"
+	got := plainLines(t, raw, nil, 60)
+	var rows []int
+	for i, l := range got {
+		if strings.Contains(l, doneChip) {
+			rows = append(rows, i)
+		}
+	}
+	if len(rows) != 2 {
+		t.Fatalf("want a row under each of the 2 open items, none under Done:\n%s", strings.Join(got, "\n"))
+	}
+	if !strings.HasPrefix(got[rows[0]-1], "• plain") || !strings.HasPrefix(got[rows[1]-1], "more") {
+		t.Fatalf("rows must hug the last line of their item:\n%s", strings.Join(got, "\n"))
+	}
+	if !strings.Contains(got[rows[0]], "[ 💬 Reply ]") {
+		t.Fatalf("row %q lacks Reply", got[rows[0]])
+	}
+}
 func TestNoRowUnderDoneOrShippedOrPlaceholder(t *testing.T) {
 	raw := "## ✅ Done (1)\n\n- a\n\n## 📦 Shipped\n\n- b\n\n## 🚧 In progress\n\n- " + emptySectionPlaceholder + "\n"
 	b, _ := parseBoard(raw)
-	if got := buttonize(raw, b); strings.Contains(got, "Reply") {
+	if got := (buttonize(raw, b)); strings.Contains(got, "Reply") {
 		t.Fatalf("finished and placeholder items get no buttons:\n%s", got)
 	}
 }
 
 func TestNarrativeAskShowsAsTheQuestion(t *testing.T) {
 	b, _ := parseBoard(buttonBoard)
-	got := buttonize(buttonBoard, b)
+	got := (buttonize(buttonBoard, b))
 	if !strings.Contains(got, "  💬 What did you change on your side in the meantime?\n") || strings.Contains(got, "Ask:") {
 		t.Fatalf("question not shown:\n%s", got)
 	}
@@ -62,37 +84,31 @@ func TestNarrativeAskShowsAsTheQuestion(t *testing.T) {
 
 func TestChoiceAskStillDrawsChoiceButtons(t *testing.T) {
 	raw := "## 🧠 Needs you\n\n- Merge?\n  Ask: ✅ Go | ❌ Hold\n"
-	b, _ := parseBoard(raw)
-	got := buttonize(raw, b)
-	if !strings.Contains(got, "  `[ ✅ Go ]` `[ ❌ Hold ]`\n") {
+	got := strings.Join(plainLines(t, raw, nil, 80), "\n")
+	if !strings.Contains(got, "[ ✅ Go ]") || !strings.Contains(got, "[ ❌ Hold ]") || !strings.Contains(got, "💬 Choose:") {
 		t.Fatalf("choices missing:\n%s", got)
 	}
-	raw2 := strings.Replace(raw, "Ask:", "Answer: ❌ Hold\n  Ask:", 1)
-	b2, _ := parseBoard(raw2)
-	if got := buttonize(raw2, b2); !strings.Contains(got, "`[ ✓ ❌ Hold ]`") {
+	raw2 := strings.Replace(raw, "  Ask:", "  Answer: ❌ Hold\n  Ask:", 1)
+	if got := strings.Join(plainLines(t, raw2, nil, 80), "\n"); !strings.Contains(got, "[ ✓ ❌ Hold ]") {
 		t.Fatalf("recorded choice not ticked:\n%s", got)
 	}
 }
-
 func TestReplyButtonReadsEditOnceReplied(t *testing.T) {
 	raw := "## 🧠 Needs you\n\n- x\n  Answer: did it\n"
-	b, _ := parseBoard(raw)
-	if got := buttonize(raw, b); !strings.Contains(got, "`[ 💬 Edit reply ]`") {
+	if got := strings.Join(plainLines(t, raw, nil, 60), "\n"); !strings.Contains(got, "[ 💬 Edit reply ]") {
 		t.Fatalf("got:\n%s", got)
 	}
 }
-
-func TestDisplayTextSurvivesCollapseCounts(t *testing.T) {
+func TestCollapsedSectionsKeepTheirCountAndDropTheirButtons(t *testing.T) {
 	m, _ := buttonModel(t)
-	got := displayText(m.raw, m.board, map[string]bool{"✅ Done": true})
-	if !strings.Contains(got, "## ✅ Done (1)") || strings.Count(got, "[ ✅ Done ]") != 1 {
+	got := strings.Join(plainLines(t, m.raw, map[string]bool{"✅ Done": true}, 60), "\n")
+	if !strings.Contains(got, "✅ Done (1)") || strings.Count(got, doneChip) != 1 {
 		t.Fatalf("got:\n%s", got)
 	}
 }
-
 func TestButtonsRenderInThePane(t *testing.T) {
 	m, _ := buttonModel(t)
-	view := stripANSI(m.vp.View())
+	view := (stripANSI(m.vp.View()))
 	for _, want := range []string{"[ ✅ Done ]", "[ 💬 Reply ]", "What did you change"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("pane missing %q:\n%s", want, view)
@@ -106,8 +122,9 @@ func TestButtonsRenderInThePane(t *testing.T) {
 func clickAt(t *testing.T, m model, text string, x int) model {
 	t.Helper()
 	for i, ln := range m.renderedLines {
-		if idx := strings.Index(stripANSI(ln), text); idx >= 0 {
-			msg := tea.MouseMsg{X: visibleWidth(stripANSI(ln)[:idx]) + x, Y: i - m.vp.YOffset, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+		if plain := (stripANSI(ln)); strings.Contains(plain, text) {
+			idx := strings.Index(plain, text)
+			msg := tea.MouseMsg{X: visibleWidth(plain[:idx]) + x, Y: i - m.vp.YOffset, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
 			next, _ := m.Update(msg)
 			return next.(model)
 		}
@@ -236,5 +253,160 @@ func TestAKeyRepliesOnAnyItem(t *testing.T) {
 	special(t, m, tea.KeyEnter)
 	if !strings.Contains(readFile(t, p), "Answer: ok") {
 		t.Fatalf("got:\n%s", readFile(t, p))
+	}
+}
+
+const wideBoard = `# Board
+
+## 🧠 Needs you
+
+- PR #30 lets the human answer the agent from the board, with a long line that wraps at every pane width the test tries. It ends mid sentence so the button row cannot hide in slack space.
+  https://github.com/than/sidecar/pull/30
+  Ask: What did you change on your side while this ran, and did the deploy behave?
+  Next: review and merge.
+
+## 🚧 In progress
+
+- Short one.
+- Second short one with **bold** and a [link](https://example.com/a/long/path/that/keeps/going).
+
+## ✅ Done
+
+- shipped
+`
+
+// A button that wraps mid-label cannot be clicked, so at every pane width
+// each open item's buttons must sit whole on one rendered line, and a click
+// on them must act.
+func TestButtonsStayWholeAndClickableAtEveryWidth(t *testing.T) {
+	for w := 24; w <= 200; w += 7 {
+		p := filepath.Join(t.TempDir(), "sidecar.md")
+		writeFile(t, p, wideBoard)
+		m := newModel(p, false)
+		m.mouse = true
+		next, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 60})
+		m = next.(model)
+		rows := 0
+		for _, ln := range m.renderedLines {
+			plain := (stripANSI(ln))
+			if strings.Contains(plain, doneChip) {
+				rows++
+				if !strings.Contains(plain, replyChip) && w >= 30 {
+					t.Fatalf("width %d: Done and Reply split across lines: %q", w, plain)
+				}
+			}
+		}
+		if rows != 3 {
+			t.Fatalf("width %d: want 3 whole button rows, got %d\n%s", w, rows, stripANSI(strings.Join(m.renderedLines, "\n")))
+		}
+		m2 := clickAt(t, m, replyChip, 3)
+		if !m2.typing {
+			t.Fatalf("width %d: clicking Reply did nothing", w)
+		}
+		m3 := clickAt(t, m, doneChip, 3)
+		if m3.notice == "" && readFile(t, p) == wideBoard {
+			t.Fatalf("width %d: clicking Done did nothing", w)
+		}
+	}
+}
+
+func motionAt(t *testing.T, m model, text string, x int) model {
+	t.Helper()
+	for i, ln := range m.renderedLines {
+		if plain := stripANSI(ln); strings.Contains(plain, text) {
+			idx := strings.Index(plain, text)
+			next, _ := m.Update(tea.MouseMsg{X: visibleWidth(plain[:idx]) + x, Y: i - m.vp.YOffset, Action: tea.MouseActionMotion})
+			return next.(model)
+		}
+	}
+	t.Fatalf("no rendered line contains %q", text)
+	return m
+}
+
+func TestButtonsRestQuietAndPaintUnderThePointer(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+	m, _ := buttonModel(t)
+	m.mouse = true
+	rest := m.vp.View()
+	m = motionAt(t, m, replyChip, 3)
+	if m.hover.line < 0 || m.hover.chip != replyChip {
+		t.Fatalf("hover not tracked: %+v", m.hover)
+	}
+	if hot := m.vp.View(); hot == rest || !strings.Contains(hot, buttonStyle.Render(replyChip)) {
+		t.Fatal("the hovered button should repaint solid blue")
+	}
+	if strings.Contains(rest, buttonStyle.Render(replyChip)) || strings.Contains(rest, buttonGoStyle.Render(doneChip)) {
+		t.Fatal("buttons at rest must not be painted solid")
+	}
+	m = motionAt(t, m, "Next:", 0) // pointer leaves the buttons
+	if m.hover.line != -1 || m.vp.View() != rest {
+		t.Fatal("moving off a button should return it to rest")
+	}
+}
+
+func TestHoverIgnoredWithMouseOff(t *testing.T) {
+	m, _ := buttonModel(t)
+	m = motionAt(t, m, replyChip, 3)
+	if m.hover.line != -1 {
+		t.Fatal("no hover while mouse is off")
+	}
+}
+
+func TestUndoRestoresTheBoardAndRefusesAfterAgentEdits(t *testing.T) {
+	m, p := buttonModel(t)
+	m.mouse = true
+	m = clickAt(t, m, doneChip, 3)
+	if !strings.Contains(m.notice, "u to undo") {
+		t.Fatalf("notice %q should offer undo", m.notice)
+	}
+	m = press(t, m, "u")
+	if readFile(t, p) != buttonBoard || m.notice != "undone" {
+		t.Fatalf("undo did not restore the board (notice %q):\n%s", m.notice, readFile(t, p))
+	}
+	// Move again, then let the agent edit: undo must not clobber it.
+	m = clickAt(t, m, doneChip, 3)
+	writeFile(t, p, readFile(t, p)+"- agent added this\n")
+	m = press(t, m, "u")
+	if !strings.Contains(readFile(t, p), "- agent added this") || !strings.Contains(m.notice, "changed since") {
+		t.Fatalf("undo overwrote the agent's edit (notice %q)", m.notice)
+	}
+}
+
+func TestClickingTheStatusMessageUndoes(t *testing.T) {
+	m, p := buttonModel(t)
+	m.mouse = true
+	m = clickAt(t, m, doneChip, 3)
+	next, _ := m.Update(tea.MouseMsg{X: 5, Y: m.vp.Height, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	_ = next
+	if readFile(t, p) != buttonBoard {
+		t.Fatal("clicking the status bar should undo the last change")
+	}
+}
+
+func TestUKeyScrollsWhenNothingToUndo(t *testing.T) {
+	m, _ := buttonModel(t)
+	m = press(t, m, "u")
+	if m.notice != "" {
+		t.Fatalf("u with nothing to undo should fall through to the viewport, got %q", m.notice)
+	}
+}
+
+func TestReplyIsTypedInlineUnderTheItem(t *testing.T) {
+	m, _ := buttonModel(t)
+	m.mouse = true
+	m = clickAt(t, m, replyChip, 3)
+	m = typeText(t, m, "worker restarted")
+	view := stripANSI(m.vp.View())
+	if !strings.Contains(view, "💬 worker restarted▌") {
+		t.Fatalf("typed text should appear under the item:\n%s", view)
+	}
+	if strings.Contains(view, replyChip) {
+		t.Fatal("the typed line replaces the button row while typing")
+	}
+	m = special(t, m, tea.KeyEsc)
+	if v := stripANSI(m.vp.View()); !strings.Contains(v, replyChip) || strings.Contains(v, "worker restarted") {
+		t.Fatalf("esc should bring the buttons back:\n%s", v)
 	}
 }

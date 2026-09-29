@@ -90,12 +90,14 @@ type model struct {
 	itemStarts       [][]int
 	notice           string
 	mouse            bool
-	typing           bool   // an answer is being typed in the status bar
-	input            string // the answer typed so far
+	typing           bool   // a reply is being typed under the selected item
+	input            string // the reply typed so far
+	hover            hoverChip
+	undo             []undoEntry
 }
 
 func newModel(path string, noFlash bool) model {
-	return model{path: path, noFlash: noFlash, collapsed: map[string]bool{}, cursor: -1, itemSec: -1, itemIdx: -1}
+	return model{path: path, noFlash: noFlash, collapsed: map[string]bool{}, cursor: -1, itemSec: -1, itemIdx: -1, hover: hoverChip{line: -1}}
 }
 
 func (m model) Init() tea.Cmd {
@@ -109,7 +111,12 @@ func tick() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
+		if m.mouse && msg.Action == tea.MouseActionMotion {
+			m.setHover(msg.X, msg.Y)
+			return m, nil
+		}
 		if m.mouse && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			m.notice = fmt.Sprintf("click %d,%d", msg.X, msg.Y) // proof the click arrived, if nothing acts on it
 			m.mouseClick(msg.X, msg.Y)
 			return m, nil
 		}
@@ -138,6 +145,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "{":
 			m.moveQuestionCursor(-1)
 			return m, nil
+		case "u":
+			if len(m.undo) > 0 {
+				m.undoLast()
+				return m, nil
+			}
 		case "M":
 			return m, m.toggleMouse()
 		case "esc":
@@ -323,7 +335,7 @@ func (m *model) reload(force bool) (changed bool) {
 		displayRaw = displayText(raw, board, m.collapsed)
 	}
 
-	rendered, err := renderMarkdown(displayRaw, m.renderWidth(), true)
+	lines, err := renderBoardLines(displayRaw, m.board, m.renderWidth())
 	if err != nil {
 		m.loadErr = err
 		m.vp.SetContent(fmt.Sprintf("\n  Render error: %v", err))
@@ -333,7 +345,6 @@ func (m *model) reload(force bool) (changed bool) {
 		m.hasBaseline = false
 		return false
 	}
-	lines := styleButtons(strings.Split(rendered, "\n"))
 	m.headerLines = sectionHeaderLines(lines)
 	m.itemStarts = itemStartLines(lines, m.headerLines, m.board)
 	m.fixItemCursor()
@@ -349,8 +360,9 @@ func (m *model) reload(force bool) (changed bool) {
 		if baseBoard, ok := parseBoard(m.prevBaseline); ok {
 			baseDisplay = displayText(m.prevBaseline, baseBoard, m.collapsed)
 		}
-		if base, berr := renderMarkdown(baseDisplay, m.renderWidth(), true); berr == nil {
-			changedMap = changedLines(styleButtons(strings.Split(base, "\n")), lines)
+		baseBoard, _ := parseBoard(m.prevBaseline)
+		if base, berr := renderBoardLines(baseDisplay, baseBoard, m.renderWidth()); berr == nil {
+			changedMap = changedLines(base, lines)
 		}
 	}
 	m.renderedLines = lines
@@ -368,7 +380,19 @@ func (m *model) reload(force bool) (changed bool) {
 // changed/flash marking (composeMarked) and the section-cursor highlight
 // (applyCursorHighlight) — at the current flash and cursor state.
 func (m *model) compose() string {
-	display := composeMarked(m.renderedLines, m.changed, m.lineFlash && !m.noFlash, m.renderWidth())
+	lines := m.renderedLines
+	// Overlays that swap whole lines work on a copy, before any tint is
+	// layered on: the hovered button turns solid, and a reply being typed
+	// replaces its item's button row.
+	if m.hover.line >= 0 && m.hover.line < len(lines) {
+		lines = append([]string(nil), lines...)
+		lines[m.hover.line] = strings.Replace(lines[m.hover.line], styleChip(m.hover.chip), hotChip(m.hover.chip), 1)
+	}
+	if l, text, ok := m.typingRow(m.renderWidth()); ok && l < len(lines) {
+		lines = append([]string(nil), lines...)
+		lines[l] = text
+	}
+	display := composeMarked(lines, m.changed, m.lineFlash && !m.noFlash, m.renderWidth())
 	display = applyCursorHighlight(display, m.headerLines, m.cursor, m.renderWidth())
 	return applyItemHighlight(display, m.itemStarts, m.itemSec, m.itemIdx, 0, m.renderWidth())
 }
@@ -394,11 +418,11 @@ func (m *model) rerenderCollapse() {
 		return
 	}
 	displayRaw := displayText(m.raw, m.board, m.collapsed)
-	rendered, err := renderMarkdown(displayRaw, m.renderWidth(), true)
+	lines, err := renderBoardLines(displayRaw, m.board, m.renderWidth())
 	if err != nil {
 		return // m.raw already rendered fine on the last successful reload
 	}
-	m.renderedLines = styleButtons(strings.Split(rendered, "\n"))
+	m.renderedLines = lines
 	m.headerLines = sectionHeaderLines(m.renderedLines)
 	m.itemStarts = itemStartLines(m.renderedLines, m.headerLines, m.board)
 	m.fixItemCursor()

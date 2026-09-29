@@ -14,7 +14,8 @@ Under every open item — everything outside ✅ Done and 📦 Shipped — two b
 
     [ ✅ Done ]  [ 💬 Reply ]
 
-- **Reply** opens a free-text line in the status bar, pre-filled with the current reply. Enter writes `Answer: <text>` under the item, replacing an earlier one; esc abandons it. While typing, every key is text.
+- Buttons rest as quiet grey blocks and turn solid (green Done, blue the rest) under the pointer, so a screen of items stays calm. They are drawn after rendering, on their own line below each item.
+- **Reply** opens a free-text line under the item, where the button row was, pre-filled with the current reply. Enter writes `Answer: <text>` under the item, replacing an earlier one; esc abandons it. While typing, every key is text.
 - **Done** moves the item to ✅ Done. When the human has said nothing else it also writes `Answer: ✅ Done`, so the hook can tell a human finished it.
 - An `Ask:` line with no `|` is the question. It shows as `💬 <question>` above the buttons. An `Ask: a | b` line is a choice and draws one button per option; the recorded choice is ticked.
 
@@ -37,6 +38,10 @@ Plain markdown; the file never contains a button.
 ## Writes
 
 `editItem` re-reads the file, finds the item by section label and exact text, applies a pure text transform, and swaps the file in by rename, keeping its mode. An agent edit elsewhere survives; if the item itself changed since it was rendered, nothing is written and the status bar says so.
+
+## Undo
+
+Every write made from the viewer is remembered with the file as it stood before and after. `u`, or a click on the status message, restores the earlier file — but only while the file still reads exactly as that write left it, so undo can never overwrite what the agent wrote since. Every click also says what it did in the status bar, so none looks ignored.
 
 ## Keyboard
 

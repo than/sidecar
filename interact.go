@@ -6,10 +6,27 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+// typingStyle is the reply being typed under an item.
+var typingStyle = lipgloss.NewStyle().Bold(true).
+	Foreground(lipgloss.Color("#101010")).Background(lipgloss.Color("#E5C07B"))
+
+// hoverChip is the button under the pointer: the rendered line and which
+// button's text. line is -1 when the pointer is on none.
+type hoverChip struct {
+	line int
+	chip string
+}
+
+// undoEntry is one write made from the viewer: the file before and after, so
+// undo can restore it only while the file still reads as we left it.
+type undoEntry struct{ before, after string }
 
 // itemStartLines maps each board item to the rendered line it starts on: a
 // top-level "• ", "□ ", or "✓ " line at column 0 between a section's header
@@ -184,6 +201,7 @@ func doneLabel(b Board) string {
 // apply writes one edit, then reloads so the pane shows the file as it now
 // is. A refused or failed write surfaces in the status bar.
 func (m *model) apply(label string, it BoardItem, fn func(string, Board, int, int) (string, error), note string) {
+	before, _ := os.ReadFile(m.path)
 	if err := editItem(m.path, label, it.Raw, fn); err != nil {
 		m.notice = err.Error()
 		if err == errBoardChanged {
@@ -191,7 +209,43 @@ func (m *model) apply(label string, it BoardItem, fn func(string, Board, int, in
 		}
 		return
 	}
+	after, _ := os.ReadFile(m.path)
+	if string(before) != string(after) {
+		m.undo = append(m.undo, undoEntry{string(before), string(after)})
+		if note == "" {
+			note = "ticked"
+		}
+		note += " — u to undo"
+	}
 	m.notice = note
+	m.reload(true)
+}
+
+// undoLast restores the file as it was before the viewer's last write — but
+// only while the file still reads exactly as that write left it, so undo can
+// never overwrite something the agent wrote since.
+func (m *model) undoLast() {
+	if len(m.undo) == 0 {
+		m.notice = "nothing to undo"
+		return
+	}
+	e := m.undo[len(m.undo)-1]
+	cur, err := os.ReadFile(m.path)
+	if err != nil || string(cur) != e.after {
+		m.undo = nil
+		m.notice = "board changed since — nothing undone"
+		return
+	}
+	if err := writeAtomic(m.path, e.before); err != nil {
+		m.notice = err.Error()
+		return
+	}
+	m.undo = m.undo[:len(m.undo)-1]
+	m.itemSec, m.itemIdx = -1, -1
+	m.notice = "undone"
+	if len(m.undo) > 0 {
+		m.notice += " — u to undo again"
+	}
 	m.reload(true)
 }
 
@@ -219,20 +273,9 @@ func (m model) hint() string {
 	return strings.Join(parts, " · ")
 }
 
-// mouseClick selects the item under a left click and, in the checkbox
-// gutter, ticks it. Only wired while mouse mode is on.
-func (m *model) mouseClick(x, y int) {
-	if y < 0 || y >= m.vp.Height {
-		return // the status bar row is not content
-	}
-	line := y + m.vp.YOffset
-	for si, h := range m.headerLines {
-		if h == line {
-			m.cursor = si
-			m.toggleCursor()
-			return
-		}
-	}
+// itemAtLine finds the mapped, real item whose rendered lines — first line
+// through its button row — include line.
+func (m model) itemAtLine(line int) (si, ii, start int, ok bool) {
 	for si, starts := range m.itemStarts {
 		for ii, start := range starts {
 			end := start + 1
@@ -243,33 +286,113 @@ func (m *model) mouseClick(x, y int) {
 					end++
 				}
 			}
-			if line < start || line >= end || m.board.Sections[si].Items[ii].Key == emptySectionPlaceholder {
-				continue
+			if line >= start && line < end && m.board.Sections[si].Items[ii].Key != emptySectionPlaceholder {
+				return si, ii, start, true
 			}
-			m.itemSec, m.itemIdx, m.cursor = si, ii, si
-			m.recompose()
-			it, label, _ := m.selected()
-			switch kind, opt, hit := chipAt(it, m.renderedLines[line], x); {
-			case hit && kind == chipReply:
-				m.typing, m.input = true, answerOf(it)
-			case hit && kind == chipDone:
-				m.apply(label, it, doneAndMove, "moved to Done")
-				m.itemSec, m.itemIdx = -1, -1
-			case hit:
-				m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, opt) }), "replied "+opt)
-			case x <= 1 && line == start && isCheckbox(it):
-				m.apply(label, it, replaceLines(toggleCheckbox), "")
-			}
+		}
+	}
+	return 0, 0, 0, false
+}
+
+// mouseClick acts on a left click: a section header collapses, a button
+// acts, a checkbox ticks, and any other spot on an item selects it. Every
+// outcome says so in the status bar, so a click never looks ignored.
+func (m *model) mouseClick(x, y int) {
+	if y == m.vp.Height && len(m.undo) > 0 {
+		m.undoLast() // the status bar carries "u to undo"
+		return
+	}
+	if y < 0 || y >= m.vp.Height {
+		m.notice = fmt.Sprintf("click %d,%d — the status bar is not clickable", x, y)
+		return
+	}
+	line := y + m.vp.YOffset
+	for si, h := range m.headerLines {
+		if h == line {
+			m.cursor = si
+			m.toggleCursor()
 			return
 		}
 	}
+	si, ii, start, ok := m.itemAtLine(line)
+	if !ok {
+		m.notice = fmt.Sprintf("click %d,%d — nothing to click on that line", x, y)
+		return
+	}
+	m.itemSec, m.itemIdx, m.cursor = si, ii, si
+	m.recompose()
+	it, label, _ := m.selected()
+	switch kind, opt, hit := chipAt(it, m.renderedLines[line], x); {
+	case hit && kind == chipReply:
+		m.typing, m.input = true, answerOf(it)
+		m.recompose()
+	case hit && kind == chipDone:
+		m.apply(label, it, doneAndMove, "moved to Done")
+		m.itemSec, m.itemIdx = -1, -1
+	case hit:
+		m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, opt) }), "replied "+opt)
+	case x <= 1 && line == start && isCheckbox(it):
+		m.apply(label, it, replaceLines(toggleCheckbox), "")
+	default:
+		m.notice = fmt.Sprintf("click %d,%d — item selected; the buttons under it are the clickable part", x, y)
+	}
+}
+
+// setHover tracks the button under the pointer so it can be painted; it
+// re-renders only when the button changes.
+func (m *model) setHover(x, y int) {
+	next := hoverChip{line: -1}
+	if y >= 0 && y < m.vp.Height {
+		line := y + m.vp.YOffset
+		if si, ii, _, ok := m.itemAtLine(line); ok {
+			it := m.board.Sections[si].Items[ii]
+			if c, hit := chipTextAt(it, m.renderedLines[line], x); hit {
+				next = hoverChip{line: line, chip: c}
+			}
+		}
+	}
+	if next != m.hover {
+		m.hover = next
+		m.recompose()
+	}
+}
+
+// typingRow returns the line that replaces the selected item's button row
+// while a reply is being typed, so the text appears where the click was.
+func (m model) typingRow(width int) (line int, text string, ok bool) {
+	if !m.typing {
+		return 0, "", false
+	}
+	si, ii, start, found := -1, -1, 0, false
+	if it, _, sel := m.selected(); sel {
+		_ = it
+		si, ii = m.itemSec, m.itemIdx
+		if m.itemSec < len(m.itemStarts) && m.itemIdx < len(m.itemStarts[m.itemSec]) {
+			start, found = m.itemStarts[si][ii], true
+		}
+	}
+	if !found {
+		return 0, "", false
+	}
+	for l := start; l < len(m.renderedLines); l++ {
+		if strings.Contains(stripANSI(m.renderedLines[l]), doneChip) {
+			room := max(4, width-8)
+			shown := m.input
+			for visibleWidth(shown) > room && shown != "" {
+				shown = string([]rune(shown)[1:])
+			}
+			return l, "  " + typingStyle.Render(" 💬 "+shown+"▌ "), true
+		}
+	}
+	return 0, "", false
 }
 
 func (m *model) toggleMouse() tea.Cmd {
 	m.mouse = !m.mouse
+	m.hover = hoverChip{line: -1}
 	if m.mouse {
 		m.notice = "mouse on — click buttons, boxes, items, headers (M to release)"
-		return tea.EnableMouseCellMotion
+		return tea.EnableMouseAllMotion
 	}
 	m.notice = "mouse off — native text selection restored (M to click again)"
 	return tea.DisableMouse
@@ -298,6 +421,7 @@ func (m *model) typeKey(msg tea.KeyMsg) {
 	case tea.KeyRunes:
 		m.input += string(msg.Runes)
 	}
+	m.recompose() // the reply is drawn under its item, so redraw on every key
 }
 
 // pendingQuestions counts unanswered Ask: items outside the finished

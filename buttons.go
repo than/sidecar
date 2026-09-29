@@ -8,6 +8,9 @@
 // moves the item to ✅ Done. An "Ask: a | b" line draws its choices as
 // buttons of their own; a narrative "Ask: what did you change?" line shows as
 // the question the reply answers. Clicking any button needs no item selected.
+//
+// The rows are drawn after rendering, not written into the markdown: see
+// addButtonRows.
 package main
 
 import (
@@ -29,7 +32,10 @@ var (
 			Foreground(lipgloss.Color("#101010")).Background(lipgloss.Color("#7AA2F7"))
 	buttonGoStyle = lipgloss.NewStyle().Bold(true).
 			Foreground(lipgloss.Color("#101010")).Background(lipgloss.Color("#9ECE6A"))
-	chipRun = regexp.MustCompile(`\[ [^\]]+ \]`)
+	buttonRestStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#8B93A5")).Background(lipgloss.Color("#2B303B"))
+	buttonChosenStyle = lipgloss.NewStyle().Bold(true).
+				Foreground(lipgloss.Color("#9ECE6A")).Background(lipgloss.Color("#2B303B"))
 	countIn = regexp.MustCompile(` \(\d+\)$`)
 )
 
@@ -74,24 +80,17 @@ func replyChipFor(it BoardItem) string {
 // rowChips are the buttons under an item, in order.
 func rowChips(it BoardItem) []string { return []string{doneChip, replyChipFor(it)} }
 
-func codeSpans(chips []string) string {
-	spans := make([]string, len(chips))
-	for i, c := range chips {
-		spans[i] = "`" + c + "`"
-	}
-	return strings.Join(spans, " ")
-}
-
-// buttonize adds each open item's action row and redraws its Ask: line. It
-// may add lines, so run it on the text that will actually be rendered, after
-// applyCollapse; board must be parseBoard of that same text.
+// buttonize redraws each open item's Ask: line: a narrative question shows as
+// "💬 <question>", and a choice line ("Ask: a | b") as "💬 Choose:" — its
+// choices become buttons in the row below the item. The line count never
+// changes; the rows themselves are added after rendering (addButtonRows),
+// because glamour fuses any paragraph added under a list item onto its last
+// line and would wrap a button mid-label.
 func buttonize(raw string, board Board) string {
 	lines := strings.Split(raw, "\n")
-	replace := map[int]string{}
-	after := map[int]string{}
 	for _, s := range board.Sections {
 		for _, it := range s.Items {
-			if !actionable(s.Label, it) {
+			if !actionable(s.Label, it) || !hasAsk(it) {
 				continue
 			}
 			for i := it.StartLine + 1; i <= it.EndLine && i < len(lines); i++ {
@@ -99,27 +98,108 @@ func buttonize(raw string, board Board) string {
 					continue
 				}
 				indent := lines[i][:len(lines[i])-len(strings.TrimLeft(lines[i], " \t"))]
-				if opts := optionChips(it); len(opts) > 0 {
-					replace[i] = indent + codeSpans(opts)
-				} else if q := askText(it); q != "" {
-					replace[i] = indent + "💬 " + q
+				if q := askText(it); q != "" {
+					lines[i] = indent + "💬 " + q
+				} else {
+					lines[i] = indent + "💬 Choose:"
 				}
 				break
 			}
-			after[it.EndLine] = "  " + codeSpans(rowChips(it))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// renderBoardLines renders the display markdown and adds every open item's
+// button row. board must be the parse of the file the display text came from,
+// so items line up with the rendered bullets.
+func renderBoardLines(display string, board Board, width int) ([]string, error) {
+	rendered, err := renderMarkdown(display, width, true)
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(rendered, "\n")
+	if len(board.Sections) == 0 {
+		return lines, nil
+	}
+	starts := itemStartLines(lines, sectionHeaderLines(lines), board)
+	return addButtonRows(lines, starts, board, width), nil
+}
+
+// addButtonRows inserts, below the last line of each mapped open item, its
+// buttons — choices first, then Done and Reply — packed to the pane width. An
+// item whose section could not be mapped to rendered lines gets none.
+func addButtonRows(lines []string, starts [][]int, board Board, width int) []string {
+	insert := map[int][]string{}
+	for si, s := range board.Sections {
+		if si >= len(starts) {
+			break
+		}
+		for ii, it := range s.Items {
+			if ii >= len(starts[si]) || !actionable(s.Label, it) {
+				continue
+			}
+			end := starts[si][ii] + 1
+			if ii+1 < len(starts[si]) {
+				end = starts[si][ii+1]
+			} else {
+				for end < len(lines) && strings.TrimSpace(stripANSI(lines[end])) != "" {
+					end++
+				}
+			}
+			// Back up over blank lines so the row hugs the item's last text.
+			for end-1 > starts[si][ii] && strings.TrimSpace(stripANSI(lines[end-1])) == "" {
+				end--
+			}
+			insert[end] = packButtons(append(optionChips(it), rowChips(it)...), width)
 		}
 	}
 	var out []string
 	for i, ln := range lines {
-		if r, ok := replace[i]; ok {
-			ln = r
-		}
+		out = append(out, insert[i]...)
 		out = append(out, ln)
-		if row, ok := after[i]; ok {
-			out = append(out, row)
-		}
 	}
-	return strings.Join(out, "\n")
+	return append(out, insert[len(lines)]...)
+}
+
+// packButtons lays styled buttons into lines no wider than width, two spaces
+// apart and indented two; a button that does not fit starts the next line.
+func packButtons(chips []string, width int) []string {
+	const indent = "  "
+	var rows []string
+	cur, curW := indent, len(indent)
+	for _, c := range chips {
+		w := visibleWidth(c)
+		if curW > len(indent) && curW+2+w > width {
+			rows = append(rows, cur)
+			cur, curW = indent, len(indent)
+		}
+		if curW > len(indent) {
+			cur += "  "
+			curW += 2
+		}
+		cur += styleChip(c)
+		curW += w
+	}
+	return append(rows, cur)
+}
+
+// styleChip paints one button at rest: a quiet grey block, so a screen of
+// items is not a screen of color. A recorded choice keeps its green text.
+func styleChip(c string) string {
+	if strings.HasPrefix(c, "[ ✓ ") {
+		return buttonChosenStyle.Render(c)
+	}
+	return buttonRestStyle.Render(c)
+}
+
+// hotChip paints a button under the pointer: solid green for Done, blue for
+// the rest.
+func hotChip(c string) string {
+	if c == doneChip || strings.HasPrefix(c, "[ ✓ ") {
+		return buttonGoStyle.Render(c)
+	}
+	return buttonStyle.Render(c)
 }
 
 // displayText is the board as rendered: collapsed sections dropped and counts
@@ -130,33 +210,6 @@ func displayText(raw string, board Board, collapsed map[string]bool) string {
 		return buttonize(collapsedRaw, b)
 	}
 	return collapsedRaw
-}
-
-// styleButtons repaints every line made only of buttons with solid colors —
-// blue, and green for Done and a recorded choice — so they read as controls
-// rather than inline code. Visible text is unchanged, so chipAt still finds
-// each button's columns.
-func styleButtons(lines []string) []string {
-	out := make([]string, len(lines))
-	for i, ln := range lines {
-		out[i] = ln
-		t := stripANSI(ln)
-		body := strings.TrimSpace(t)
-		if !strings.HasPrefix(body, "[ ") || strings.TrimSpace(chipRun.ReplaceAllString(body, "")) != "" {
-			continue
-		}
-		indent := t[:len(t)-len(strings.TrimLeft(t, " "))]
-		var parts []string
-		for _, c := range chipRun.FindAllString(body, -1) {
-			if c == doneChip || strings.HasPrefix(c, "[ ✓ ") {
-				parts = append(parts, buttonGoStyle.Render(c))
-			} else {
-				parts = append(parts, buttonStyle.Render(c))
-			}
-		}
-		out[i] = indent + strings.Join(parts, "  ")
-	}
-	return out
 }
 
 // normalizeOption reduces an option to its letters and digits, lowercase,
@@ -203,4 +256,21 @@ func chipAt(it BoardItem, renderedLine string, x int) (kind chipKind, option str
 		return chipReply, "", true
 	}
 	return 0, "", false
+}
+
+// chipTextAt is chipAt's twin for hover: the text of the button covering
+// display column x, so it can be found again in the rendered line.
+func chipTextAt(it BoardItem, renderedLine string, x int) (string, bool) {
+	text := stripANSI(renderedLine)
+	for _, c := range append(optionChips(it), rowChips(it)...) {
+		idx := strings.Index(text, c)
+		if idx < 0 {
+			continue
+		}
+		col := visibleWidth(text[:idx])
+		if x >= col && x < col+visibleWidth(c) {
+			return c, true
+		}
+	}
+	return "", false
 }

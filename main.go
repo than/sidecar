@@ -46,6 +46,7 @@ keys:  j/k, arrows, PgUp/PgDn, wheel        scroll
        M                                    mouse on/off. On by default: click the
                                               [ Done ] / [ Reply ] buttons, boxes, items,
                                               and section headers. Shift-drag selects text.
+       u                                    undo the last change made from the viewer
        q                                    quit
 
 The file doesn't have to exist yet — sidecar waits for it and renders the
@@ -124,7 +125,7 @@ func runViewer(abs string, noFlash, noMouse bool) int {
 	// without it and M toggles it while running.
 	if !noMouse {
 		model.mouse = true
-		opts = append(opts, tea.WithMouseCellMotion())
+		opts = append(opts, tea.WithMouseAllMotion())
 	}
 	p := tea.NewProgram(model, opts...)
 	go watchFile(abs, p.Send)
