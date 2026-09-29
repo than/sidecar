@@ -245,6 +245,7 @@ const (
 	hoverNone hoverKind = iota
 	hoverBullet
 	hoverQuestion
+	hoverLink
 )
 
 // hoverTarget is the clickable thing under the pointer: the rendered lines
@@ -252,6 +253,7 @@ const (
 type hoverTarget struct {
 	line, last int
 	kind       hoverKind
+	link       linkSpan // for hoverLink
 }
 
 // bulletCells is how many columns from the left edge tick an item — the
@@ -268,6 +270,8 @@ func isQuestionLine(rendered string) bool {
 // a question goes bold and underlined.
 func paintHover(lines []string, h hoverTarget) {
 	switch h.kind {
+	case hoverLink:
+		lines[h.line] = paintLink(lines[h.line], h.link)
 	case hoverBullet:
 		l := lines[h.line]
 		lines[h.line] = bulletHotStyle.Render(stripANSI(ansi.Cut(l, 0, bulletCells))) + ansi.Cut(l, bulletCells, visibleWidth(l))

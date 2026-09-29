@@ -570,6 +570,8 @@ func (m model) statusBar() string {
 			shown = string([]rune(shown)[1:]) // keep the end, where the cursor is
 		}
 		info = lead + shown + "▌"
+	case m.hover.kind == hoverLink && m.hover.line >= 0:
+		info = "· ↗ " + m.hover.link.url
 	case m.notice != "":
 		info = "· " + m.notice
 	case h != "":

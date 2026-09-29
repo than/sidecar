@@ -13,7 +13,8 @@ The viewer is the human's channel back to the agent. The agent owns the board an
 
 - **The bullet is the control.** Click within the first four columns of an item's first line and `•` turns into `✓`; the file gets `- [x]`. Click again and it is a plain bullet. `space` does the same on the selected item.
 - **`? question`** — an `Ask:` line is drawn as an indented `? …` block in one accent color, wrapped with a hanging indent. Click any line of it, or press `enter` on the item, and a reply line opens under the item; Enter writes it, esc abandons it. The reply shows as `↳ …`. The reply line is pre-filled with the current reply so it can be edited, and shows `type your reply… ⏎ send · esc cancel` when empty.
-- Whatever is clickable — bullet or question — turns solid under the pointer; nothing else changes on hover.
+- **Links** open on a click. Capture stops the terminal handling OSC 8 links, so the viewer finds the link under the pointer in the rendered line and opens it (web and mail schemes only; never `file:` or an app's scheme). The full address shows in the status bar on hover.
+- Whatever is clickable — bullet, question, or link — turns solid under the pointer; nothing else changes on hover.
 - One blank line separates items.
 - The viewer never moves an item between sections. Filing stays with the agent.
 
@@ -46,4 +47,4 @@ Plain markdown; the file never contains a control.
 
 - Items are mapped to rendered lines by their column-0 marker (`•`, `□`, `✓`); a section whose rendered count differs from the parsed count (collapsed) is skipped rather than mis-selected.
 - When `--mid-turn` reports, the snapshot advances whole, so an agent edit made in the same window is not repeated in the next prompt's diff.
-- Clicking a link while capture is on may not reach the terminal's own link handling; the viewer does not open links itself yet.
+- A click is held while a reply is being typed, so it cannot act on a line the typing row has shifted.

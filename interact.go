@@ -341,7 +341,17 @@ func (m *model) mouseClick(x, y int) {
 		m.notice = fmt.Sprintf("click %d,%d — the status bar is not clickable", x, y)
 		return
 	}
+	if m.typing {
+		m.notice = "finish the reply first — enter sends, esc cancels"
+		return
+	}
 	line := y + m.vp.YOffset
+	if line < len(m.renderedLines) {
+		if s, ok := linkAt(m.renderedLines[line], x); ok {
+			m.openLink(s.url)
+			return
+		}
+	}
 	for si, h := range m.headerLines {
 		if h == line {
 			m.cursor = si
@@ -370,9 +380,16 @@ func (m *model) mouseClick(x, y int) {
 // re-renders only when the target changes.
 func (m *model) setHover(x, y int) {
 	next := hoverTarget{line: -1}
-	if y >= 0 && y < m.vp.Height {
+	if y >= 0 && y < m.vp.Height && !m.typing {
 		line := y + m.vp.YOffset
-		if si, ii, last, kind := m.targetAt(x, line); kind != hoverNone {
+		if line < len(m.renderedLines) {
+			if s, ok := linkAt(m.renderedLines[line], x); ok {
+				next = hoverTarget{line: line, last: line, kind: hoverLink, link: s}
+			}
+		}
+		if next.line >= 0 {
+			// a link wins over the item it sits in
+		} else if si, ii, last, kind := m.targetAt(x, line); kind != hoverNone {
 			first := line
 			if kind == hoverQuestion {
 				start := m.itemStarts[si][ii]
