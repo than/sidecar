@@ -363,24 +363,20 @@ func hunkHeader(o, dels, n, adds int) string {
 }
 
 // humanChange names the reader-facing state changes the viewer writes — a
-// ticked box or an answered prompt — so the agent sees the decision in the
-// diff itself, not just that the item changed.
+// ticked bullet or a reply — so the agent sees the decision in the diff
+// itself, not just that the item changed.
 func humanChange(old, new BoardItem) string {
 	var out string
 	switch ot, nt := isTicked(old), isTicked(new); {
-	case isCheckbox(new) && ot != nt && nt:
+	case !ot && nt:
 		out += " — ticked"
-	case isCheckbox(new) && ot != nt:
+	case ot && !nt:
 		out += " — unticked"
 	}
 	if a := answerOf(new); a != answerOf(old) && a != "" {
 		out += fmt.Sprintf(" — replied %q", truncateRunes(a, 400))
 	}
 	return out
-}
-
-func isTicked(it BoardItem) bool {
-	return strings.HasPrefix(strings.ToLower(firstLine(it.Raw)), ticked)
 }
 
 func truncateRunes(s string, n int) string {

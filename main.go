@@ -35,18 +35,13 @@ keys:  j/k, arrows, PgUp/PgDn, wheel        scroll
        g / G                                top / bottom
        tab / shift+tab                      move between sections
        enter / space                        collapse / expand section
-       ] / [                                select next / previous item
-       a                                    reply to the selected item (enter sends)
-       d                                    send the selected item to Done
-       x                                    tick a "- [ ]" item
-       1-9  or  y / n / d                   pick a choice from an "Ask: a | b" line
+       click a • bullet, or  ] / [ then x   tick it ✓ (again to untick)
+       click a ? question, or  a            answer the agent, in your own words
        } / {                                next / previous open question
+       u                                    undo the last change made from the viewer
        esc                                  deselect
        r                                    force reload
-       M                                    mouse on/off. On by default: click the
-                                              [ Done ] / [ Reply ] buttons, boxes, items,
-                                              and section headers. Shift-drag selects text.
-       u                                    undo the last change made from the viewer
+       M                                    mouse on/off. On by default; Shift-drag selects text.
        q                                    quit
 
 The file doesn't have to exist yet — sidecar waits for it and renders the

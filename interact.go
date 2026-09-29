@@ -1,7 +1,7 @@
-// interact.go — the viewer's item cursor: pick a board item, then tick it,
-// answer its Ask: prompt, or send it to ✅ Done. Keyboard-first; mouse
-// clicks work only while mouse mode (M) is on, so native text selection and
-// clickable links stay the default.
+// interact.go — the viewer's channel back to the agent. Select an item, tick
+// its bullet, or reply to the agent's question; each is one line written to
+// the board, and the agent's hook reads it. Mouse clicks are on by default;
+// every action has a key too. Nothing here moves an item between sections.
 package main
 
 import (
@@ -10,19 +10,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
-
-// typingStyle is the reply being typed under an item.
-var typingStyle = lipgloss.NewStyle().Bold(true).
-	Foreground(lipgloss.Color("#101010")).Background(lipgloss.Color("#E5C07B"))
-
-// hoverChip is the button under the pointer: the rendered line and which
-// button's text. line is -1 when the pointer is on none.
-type hoverChip struct {
-	line int
-	chip string
-}
 
 // undoEntry is one write made from the viewer: the file before and after, so
 // undo can restore it only while the file still reads as we left it.
@@ -58,21 +46,13 @@ func itemStartLines(lines []string, headers []int, board Board) [][]int {
 }
 
 // applyItemHighlight tints the selected item's rendered lines.
-func applyItemHighlight(display string, starts [][]int, si, ii, total, width int) string {
+func applyItemHighlight(display string, starts [][]int, si, ii, width int) string {
 	if si < 0 || si >= len(starts) || ii < 0 || ii >= len(starts[si]) {
 		return display
 	}
 	lines := strings.Split(display, "\n")
-	from := starts[si][ii]
-	to := from + 1
-	if ii+1 < len(starts[si]) {
-		to = starts[si][ii+1]
-	} else {
-		for to < len(lines) && strings.TrimSpace(stripANSI(lines[to])) != "" {
-			to++
-		}
-	}
-	for i := from; i < to && i < len(lines); i++ {
+	end := itemEnd(lines, starts[si], ii)
+	for i := starts[si][ii]; i < end && i < len(lines); i++ {
 		if strings.TrimSpace(stripANSI(lines[i])) != "" {
 			lines[i] = applyLineBg(lines[i], colorCursorBg, width)
 		}
@@ -91,12 +71,9 @@ func (m model) selected() (BoardItem, string, bool) {
 	return s.Items[m.itemIdx], s.Label, true
 }
 
-// moveItemCursor steps to the next (+1) or previous (-1) selectable item,
-// wrapping, and scrolls it into view.
-func (m *model) moveItemCursor(delta int) {
-	type pos struct{ s, i int }
-	var all []pos
-	cur := -1
+// itemPositions lists every mapped, real item in reading order.
+func (m model) itemPositions() (all [][2]int, cur int) {
+	cur = -1
 	for si, starts := range m.itemStarts {
 		for ii := range starts {
 			if m.board.Sections[si].Items[ii].Key == emptySectionPlaceholder {
@@ -105,9 +82,21 @@ func (m *model) moveItemCursor(delta int) {
 			if si == m.itemSec && ii == m.itemIdx {
 				cur = len(all)
 			}
-			all = append(all, pos{si, ii})
+			all = append(all, [2]int{si, ii})
 		}
 	}
+	return all, cur
+}
+
+func (m *model) selectItem(si, ii int) {
+	m.itemSec, m.itemIdx, m.cursor = si, ii, si
+	m.recompose()
+	m.scrollTo(m.itemStarts[si][ii])
+}
+
+// moveItemCursor steps to the next (+1) or previous (-1) item, wrapping.
+func (m *model) moveItemCursor(delta int) {
+	all, cur := m.itemPositions()
 	if len(all) == 0 {
 		return
 	}
@@ -118,10 +107,30 @@ func (m *model) moveItemCursor(delta int) {
 	case delta < 0:
 		next = len(all) - 1
 	}
-	m.itemSec, m.itemIdx = all[next].s, all[next].i
-	m.cursor = m.itemSec
-	m.recompose()
-	m.scrollTo(m.itemStarts[m.itemSec][m.itemIdx])
+	m.selectItem(all[next][0], all[next][1])
+}
+
+// moveQuestionCursor selects the next (+1) or previous (-1) unanswered
+// question that is visible, wrapping, and says so when none is waiting.
+func (m *model) moveQuestionCursor(delta int) {
+	all, cur := m.itemPositions()
+	n := len(all)
+	for step := 1; step <= n; step++ {
+		var idx int
+		switch {
+		case cur >= 0:
+			idx = ((cur+delta*step)%n + n) % n
+		case delta > 0:
+			idx = step - 1
+		default:
+			idx = n - step
+		}
+		if isUnanswered(m.board.Sections[all[idx][0]].Items[all[idx][1]]) {
+			m.selectItem(all[idx][0], all[idx][1])
+			return
+		}
+	}
+	m.notice = "no questions waiting"
 }
 
 func (m *model) clearItemCursor() {
@@ -148,58 +157,61 @@ func (m *model) itemKey(key string) bool {
 	if !ok {
 		return false
 	}
-	opts := askOptions(it)
-	switch {
-	case key == "esc":
+	switch key {
+	case "esc":
 		m.clearItemCursor()
-		return true
-	case key == "x" && isCheckbox(it):
-		m.apply(label, it, replaceLines(toggleCheckbox), "")
-		return true
-	case key == "a":
-		m.typing, m.input = true, answerOf(it)
-		return true
-	case len(opts) > 0 && optionForKey(key, opts) != "":
-		choice := optionForKey(key, opts)
-		m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, choice) }), "replied "+choice)
-		return true
-	case key == "d":
-		m.apply(label, it, doneAndMove, "moved to Done")
-		m.itemSec, m.itemIdx = -1, -1
-		return true
+	case "x":
+		m.tick(label, it)
+	case "a":
+		m.startReply(it)
+	default:
+		return false
 	}
-	return false
+	return true
 }
 
-// optionForKey picks an Ask: option: a digit selects by position; y, n, and
-// d select "yes", "no", and "done" when the prompt offers them.
-func optionForKey(key string, opts []string) string {
-	if len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
-		if n := int(key[0] - '1'); n < len(opts) {
-			return opts[n]
-		}
-		return ""
+func (m *model) tick(label string, it BoardItem) {
+	note := "ticked"
+	if isTicked(it) {
+		note = "unticked"
 	}
-	want := map[string]string{"y": "yes", "n": "no", "d": "done"}[key]
-	for _, o := range opts {
-		if want != "" && normalizeOption(o) == want {
-			return o
-		}
-	}
-	return ""
+	m.apply(label, it, replaceLines(toggleTick), note)
 }
 
-func doneLabel(b Board) string {
-	for _, s := range b.Sections {
-		if strings.HasSuffix(s.Label, "Done") {
-			return s.Label
-		}
-	}
-	return "✅ Done"
+func (m *model) startReply(it BoardItem) {
+	m.typing, m.input = true, answerOf(it)
+	m.recompose()
 }
 
-// apply writes one edit, then reloads so the pane shows the file as it now
-// is. A refused or failed write surfaces in the status bar.
+// typeKey handles a keypress while a reply is being typed under an item:
+// text appends, backspace deletes, enter writes it, esc (or ctrl+c) abandons
+// it. Every key is consumed, so typing "q" or "x" into a reply never quits or
+// ticks anything.
+func (m *model) typeKey(msg tea.KeyMsg) {
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyCtrlC:
+		m.typing, m.input = false, ""
+	case tea.KeyEnter:
+		text := cleanAnswer(m.input)
+		it, label, ok := m.selected()
+		m.typing, m.input = false, ""
+		if ok && text != "" {
+			m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, text) }), "reply sent")
+		}
+	case tea.KeyBackspace:
+		if r := []rune(m.input); len(r) > 0 {
+			m.input = string(r[:len(r)-1])
+		}
+	case tea.KeySpace:
+		m.input += " "
+	case tea.KeyRunes:
+		m.input += string(msg.Runes)
+	}
+	m.recompose() // the reply is drawn under its item, so redraw on every key
+}
+
+// apply writes one edit, remembers it for undo, then reloads so the pane shows
+// the file as it now is. A refused or failed write surfaces in the status bar.
 func (m *model) apply(label string, it BoardItem, fn func(string, Board, int, int) (string, error), note string) {
 	before, _ := os.ReadFile(m.path)
 	if err := editItem(m.path, label, it.Raw, fn); err != nil {
@@ -212,9 +224,6 @@ func (m *model) apply(label string, it BoardItem, fn func(string, Board, int, in
 	after, _ := os.ReadFile(m.path)
 	if string(before) != string(after) {
 		m.undo = append(m.undo, undoEntry{string(before), string(after)})
-		if note == "" {
-			note = "ticked"
-		}
 		note += " — u to undo"
 	}
 	m.notice = note
@@ -249,47 +258,48 @@ func (m *model) undoLast() {
 	m.reload(true)
 }
 
+// pendingQuestions counts unanswered questions outside the finished sections
+// — what is waiting on the human.
+func (m model) pendingQuestions() int {
+	n := 0
+	for _, s := range m.board.Sections {
+		if finishedLabel(s.Label) {
+			continue
+		}
+		for _, it := range s.Items {
+			if isUnanswered(it) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // hint is the status-bar line shown while an item is selected.
 func (m model) hint() string {
 	it, _, ok := m.selected()
 	if !ok {
 		return ""
 	}
-	parts := []string{"[ prev · ] next", "a reply"}
-	if isCheckbox(it) {
-		parts = append(parts, "x tick")
+	tick := "x tick"
+	if isTicked(it) {
+		tick = "x untick"
 	}
-	if opts := askOptions(it); len(opts) > 0 {
-		var o []string
-		for i, v := range opts {
-			o = append(o, fmt.Sprintf("%d %s", i+1, v))
-		}
-		parts = append(parts, strings.Join(o, "  "))
+	reply := "a reply"
+	if answerOf(it) != "" {
+		reply = "a edit reply"
 	}
-	parts = append(parts, "d done", "esc")
-	if !m.mouse {
-		parts = append(parts, "M mouse on")
-	}
-	return strings.Join(parts, " · ")
+	return strings.Join([]string{"[ prev · ] next", tick, reply, "esc"}, " · ")
 }
 
-// itemAtLine finds the mapped, real item whose rendered lines — first line
-// through its button row — include line.
+// itemAtLine finds the mapped, real item whose rendered lines include line.
 func (m model) itemAtLine(line int) (si, ii, start int, ok bool) {
 	for si, starts := range m.itemStarts {
 		for ii, start := range starts {
-			end := start + 1
-			if ii+1 < len(starts) {
-				end = starts[ii+1]
-			} else {
-				for end < len(m.renderedLines) && strings.TrimSpace(stripANSI(m.renderedLines[end])) != "" {
-					end++
-				}
+			if m.board.Sections[si].Items[ii].Key == emptySectionPlaceholder {
+				continue
 			}
-			for end-1 > start && strings.TrimSpace(stripANSI(m.renderedLines[end-1])) == "" {
-				end-- // the blank spacer after an item is not part of it
-			}
-			if line >= start && line < end && m.board.Sections[si].Items[ii].Key != emptySectionPlaceholder {
+			if line >= start && line < itemEnd(m.renderedLines, starts, ii) {
 				return si, ii, start, true
 			}
 		}
@@ -297,9 +307,25 @@ func (m model) itemAtLine(line int) (si, ii, start int, ok bool) {
 	return 0, 0, 0, false
 }
 
-// mouseClick acts on a left click: a section header collapses, a button
-// acts, a checkbox ticks, and any other spot on an item selects it. Every
-// outcome says so in the status bar, so a click never looks ignored.
+// targetAt classifies what is under a click or the pointer: the bullet (the
+// first two columns of an item's first line) or the item's question line.
+func (m model) targetAt(x, line int) (si, ii int, kind hoverKind) {
+	si, ii, start, ok := m.itemAtLine(line)
+	if !ok {
+		return 0, 0, hoverNone
+	}
+	switch {
+	case line == start && x <= 1:
+		return si, ii, hoverBullet
+	case isQuestionLine(m.renderedLines[line]):
+		return si, ii, hoverQuestion
+	}
+	return si, ii, hoverNone
+}
+
+// mouseClick acts on a left click: a section header collapses, a bullet
+// ticks, a question opens a reply, and any other spot on an item selects it.
+// Every outcome says so in the status bar, so a click never looks ignored.
 func (m *model) mouseClick(x, y int) {
 	if y == m.vp.Height && len(m.undo) > 0 {
 		m.undoLast() // the status bar carries "u to undo"
@@ -317,41 +343,31 @@ func (m *model) mouseClick(x, y int) {
 			return
 		}
 	}
-	si, ii, start, ok := m.itemAtLine(line)
-	if !ok {
+	si, ii, kind := m.targetAt(x, line)
+	if _, _, _, ok := m.itemAtLine(line); !ok {
 		m.notice = fmt.Sprintf("click %d,%d — nothing to click on that line", x, y)
 		return
 	}
-	m.itemSec, m.itemIdx, m.cursor = si, ii, si
-	m.recompose()
+	m.selectItem(si, ii)
 	it, label, _ := m.selected()
-	switch kind, opt, hit := chipAt(it, m.renderedLines[line], x); {
-	case hit && kind == chipReply:
-		m.typing, m.input = true, answerOf(it)
-		m.recompose()
-	case hit && kind == chipDone:
-		m.apply(label, it, doneAndMove, "moved to Done")
-		m.itemSec, m.itemIdx = -1, -1
-	case hit:
-		m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, opt) }), "replied "+opt)
-	case x <= 1 && line == start && isCheckbox(it):
-		m.apply(label, it, replaceLines(toggleCheckbox), "")
+	switch kind {
+	case hoverBullet:
+		m.tick(label, it)
+	case hoverQuestion:
+		m.startReply(it)
 	default:
-		m.notice = fmt.Sprintf("click %d,%d — item selected; the buttons under it are the clickable part", x, y)
+		m.notice = "item selected — click its bullet to tick, its ? question to reply"
 	}
 }
 
-// setHover tracks the button under the pointer so it can be painted; it
-// re-renders only when the button changes.
+// setHover tracks what is under the pointer so it can be painted; it
+// re-renders only when the target changes.
 func (m *model) setHover(x, y int) {
-	next := hoverChip{line: -1}
+	next := hoverTarget{line: -1}
 	if y >= 0 && y < m.vp.Height {
 		line := y + m.vp.YOffset
-		if si, ii, _, ok := m.itemAtLine(line); ok {
-			it := m.board.Sections[si].Items[ii]
-			if c, hit := chipTextAt(it, m.renderedLines[line], x); hit {
-				next = hoverChip{line: line, chip: c}
-			}
+		if _, _, kind := m.targetAt(x, line); kind != hoverNone {
+			next = hoverTarget{line: line, kind: kind}
 		}
 	}
 	if next != m.hover {
@@ -360,154 +376,47 @@ func (m *model) setHover(x, y int) {
 	}
 }
 
-// typingRow returns the line that replaces the selected item's button row
-// while a reply is being typed, so the text appears where the click was.
-func (m model) typingRow(width int) (line int, text string, ok bool) {
-	if !m.typing {
-		return 0, "", false
+// typingRow finds where the reply being typed is drawn: on the item's reply
+// line when it has one, otherwise as a new line after its last line. insert
+// says which.
+func (m model) typingRow(width int) (line int, text string, insert, ok bool) {
+	if !m.typing || m.itemSec < 0 || m.itemSec >= len(m.itemStarts) || m.itemIdx >= len(m.itemStarts[m.itemSec]) {
+		return 0, "", false, false
 	}
-	si, ii, start, found := -1, -1, 0, false
-	if it, _, sel := m.selected(); sel {
-		_ = it
-		si, ii = m.itemSec, m.itemIdx
-		if m.itemSec < len(m.itemStarts) && m.itemIdx < len(m.itemStarts[m.itemSec]) {
-			start, found = m.itemStarts[si][ii], true
+	ss := m.itemStarts[m.itemSec]
+	end := itemEnd(m.renderedLines, ss, m.itemIdx)
+	const hint = "⏎ send · esc cancel"
+	showHint := width >= 44
+	room := max(4, width-8)
+	if showHint {
+		room = max(4, width-8-visibleWidth(hint)-2)
+	}
+	shown := m.input
+	if shown == "" {
+		shown = "type your reply…"
+	}
+	for visibleWidth(shown) > room && shown != "" {
+		shown = string([]rune(shown)[1:])
+	}
+	row := typingStyle.Render(" " + replyPrefix + shown + "▌ ")
+	if showHint {
+		row += "  " + hintStyle.Render(hint)
+	}
+	for l := ss[m.itemIdx] + 1; l < end; l++ {
+		if strings.HasPrefix(strings.TrimRight(stripANSI(m.renderedLines[l]), " "), replyPrefix) {
+			return l, row, false, true
 		}
 	}
-	if !found {
-		return 0, "", false
-	}
-	for l := start; l < len(m.renderedLines); l++ {
-		if strings.Contains(stripANSI(m.renderedLines[l]), doneChip) {
-			const hint = "⏎ send · esc cancel"
-			showHint := width >= 44
-			room := max(4, width-8)
-			if showHint {
-				room = max(4, width-8-visibleWidth(hint)-2)
-			}
-			shown := m.input
-			if shown == "" {
-				shown = "type your reply…"
-			}
-			for visibleWidth(shown) > room && shown != "" {
-				shown = string([]rune(shown)[1:])
-			}
-			row := "  " + typingStyle.Render(" 💬 "+shown+"▌ ")
-			if showHint {
-				row += "  " + buttonRestStyle.Render(hint)
-			}
-			return l, row, true
-		}
-	}
-	return 0, "", false
+	return end, row, true, true
 }
 
 func (m *model) toggleMouse() tea.Cmd {
 	m.mouse = !m.mouse
-	m.hover = hoverChip{line: -1}
+	m.hover = hoverTarget{line: -1}
 	if m.mouse {
-		m.notice = "mouse on — click buttons, boxes, items, headers (M to release)"
+		m.notice = "mouse on — click a bullet to tick, a ? question to reply (M to release)"
 		return tea.EnableMouseAllMotion
 	}
 	m.notice = "mouse off — native text selection restored (M to click again)"
 	return tea.DisableMouse
-}
-
-// typeKey handles a keypress while an answer is being typed in the status
-// bar: text appends, backspace deletes, enter writes the answer, esc (or
-// ctrl+c) abandons it. Every key is consumed, so typing "q" or "d" into an
-// answer never quits or moves anything.
-func (m *model) typeKey(msg tea.KeyMsg) {
-	switch msg.Type {
-	case tea.KeyEsc, tea.KeyCtrlC:
-		m.typing, m.input = false, ""
-	case tea.KeyEnter:
-		text := cleanAnswer(m.input)
-		m.typing, m.input = false, ""
-		if it, label, ok := m.selected(); ok && text != "" {
-			m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, text) }), "reply sent")
-		}
-	case tea.KeyBackspace:
-		if r := []rune(m.input); len(r) > 0 {
-			m.input = string(r[:len(r)-1])
-		}
-	case tea.KeySpace:
-		m.input += " "
-	case tea.KeyRunes:
-		m.input += string(msg.Runes)
-	}
-	m.recompose() // the reply is drawn under its item, so redraw on every key
-}
-
-// pendingQuestions counts unanswered Ask: items outside the finished
-// sections — what is waiting on the human.
-func (m model) pendingQuestions() int {
-	n := 0
-	for _, s := range m.board.Sections {
-		if strings.HasSuffix(s.Label, "Done") || strings.HasSuffix(s.Label, "Shipped") {
-			continue
-		}
-		for _, it := range s.Items {
-			if isUnanswered(it) {
-				n++
-			}
-		}
-	}
-	return n
-}
-
-// moveQuestionCursor selects the next (+1) or previous (-1) unanswered
-// question that is visible, wrapping, and says so when none is waiting.
-func (m *model) moveQuestionCursor(delta int) {
-	type pos struct{ s, i int }
-	var all []pos
-	cur := -1
-	for si, starts := range m.itemStarts {
-		for ii := range starts {
-			if si == m.itemSec && ii == m.itemIdx {
-				cur = len(all)
-			}
-			all = append(all, pos{si, ii})
-		}
-	}
-	n := len(all)
-	for step := 1; step <= n; step++ {
-		var idx int
-		switch {
-		case cur >= 0:
-			idx = ((cur+delta*step)%n + n) % n
-		case delta > 0:
-			idx = step - 1
-		default:
-			idx = n - step
-		}
-		p := all[idx]
-		if isUnanswered(m.board.Sections[p.s].Items[p.i]) {
-			m.itemSec, m.itemIdx, m.cursor = p.s, p.i, p.s
-			m.recompose()
-			m.scrollTo(m.itemStarts[p.s][p.i])
-			return
-		}
-	}
-	m.notice = "no questions waiting"
-}
-
-// doneAndMove records "✅ Done" as the reply when the human has said nothing
-// else — so the agent's hook can tell a human finished it — then moves the
-// item to ✅ Done.
-func doneAndMove(raw string, b Board, si, ii int) (string, error) {
-	it := b.Sections[si].Items[ii]
-	if answerOf(it) == "" {
-		var err error
-		raw, err = replaceLines(func(l []string) ([]string, error) { return setAnswer(l, "✅ Done") })(raw, b, si, ii)
-		if err != nil {
-			return "", err
-		}
-		nb, ok := parseBoard(raw)
-		if !ok {
-			return "", errBoardChanged
-		}
-		b = nb
-	}
-	return moveItem(raw, b, si, ii, doneLabel(b))
 }

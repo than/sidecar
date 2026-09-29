@@ -22,6 +22,18 @@ func press(t *testing.T, m model, keys ...string) model {
 	return m
 }
 
+func typeText(t *testing.T, m model, s string) model {
+	t.Helper()
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+	return next.(model)
+}
+
+func special(t *testing.T, m model, k tea.KeyType) model {
+	t.Helper()
+	next, _ := m.Update(tea.KeyMsg{Type: k})
+	return next.(model)
+}
+
 func interactModel(t *testing.T) (model, string) {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "sidecar.md")
@@ -29,7 +41,7 @@ func interactModel(t *testing.T) (model, string) {
 	return testModel(t, p), p
 }
 
-func TestItemStartLinesMapEveryItem(t *testing.T) {
+func TestItemStartLinesMapEveryOpenItem(t *testing.T) {
 	m, _ := interactModel(t)
 	got := 0
 	for si, starts := range m.itemStarts {
@@ -43,52 +55,66 @@ func TestItemStartLinesMapEveryItem(t *testing.T) {
 	}
 }
 
-func TestTickItemFromKeyboard(t *testing.T) {
+func TestTickFromKeyboardBothWays(t *testing.T) {
 	m, p := interactModel(t)
 	m = press(t, m, "]", "x")
-	if got := readFile(t, p); !strings.Contains(got, "- [x] Ship it") {
-		t.Fatalf("not ticked:\n%s", got)
+	if !strings.Contains(readFile(t, p), "- [x] Ship it") {
+		t.Fatalf("not ticked:\n%s", readFile(t, p))
 	}
-	m = press(t, m, "x")
-	if got := readFile(t, p); !strings.Contains(got, "- [ ] Ship it") {
+	if !strings.Contains(m.notice, "ticked") {
+		t.Fatalf("notice %q", m.notice)
+	}
+	press(t, m, "x")
+	if got := readFile(t, p); strings.Contains(got, "[x]") || !strings.Contains(got, "- Ship it") {
 		t.Fatalf("not unticked:\n%s", got)
 	}
 }
 
-func TestAnswerAskFromKeyboard(t *testing.T) {
+func TestReplyFromKeyboard(t *testing.T) {
 	m, p := interactModel(t)
-	m = press(t, m, "]", "]", "n")
-	if got := readFile(t, p); !strings.Contains(got, "  Ask: yes | no | done\n  Answer: no\n") {
-		t.Fatalf("not answered:\n%s", got)
+	m = press(t, m, "]", "]", "a")
+	if !m.typing {
+		t.Fatal("a should open the reply line")
 	}
-	press(t, m, "1")
-	if got := readFile(t, p); strings.Count(got, "Answer:") != 1 || !strings.Contains(got, "Answer: yes") {
-		t.Fatalf("answer not replaced:\n%s", got)
-	}
-}
-
-func TestDoneKeyOnAskAnswersDoneNotMove(t *testing.T) {
-	m, p := interactModel(t)
-	press(t, m, "]", "]", "d")
+	// q, x, and ] are text while typing — they must not quit, tick, or select.
+	m = typeText(t, m, "qx] nap")
+	m = special(t, m, tea.KeySpace)
+	m = typeText(t, m, "time")
+	m = special(t, m, tea.KeyBackspace)
+	m = special(t, m, tea.KeyEnter)
 	got := readFile(t, p)
-	if !strings.Contains(got, "Answer: done") || strings.Count(got, "Pick a path") != 1 {
-		t.Fatalf("d on a prompt offering done should answer it:\n%s", got)
+	if !strings.Contains(got, "  Ask: What should we call it?\n  Answer: qx] nap tim\n  Next: answer") {
+		t.Fatalf("reply not written under the question:\n%s", got)
 	}
-	b, _ := parseBoard(got)
-	if len(b.Sections[2].Items) != 1 {
-		t.Fatalf("item must not move:\n%s", got)
+	if m.typing || m.input != "" {
+		t.Fatal("typing state should clear after enter")
 	}
 }
 
-func TestDoneKeyMovesPlainItem(t *testing.T) {
+func TestReplyEscAbandonsAndBlankWritesNothing(t *testing.T) {
 	m, p := interactModel(t)
-	m = press(t, m, "]", "d")
-	b, _ := parseBoard(readFile(t, p))
-	if len(b.Sections[2].Items) != 2 || b.Sections[0].Items[0].Key != "Pick a path" {
-		t.Fatalf("not moved:\n%s", readFile(t, p))
+	m = press(t, m, "]", "a")
+	m = typeText(t, m, "nope")
+	m = special(t, m, tea.KeyEsc)
+	if m.typing || strings.Contains(readFile(t, p), "nope") {
+		t.Fatal("esc must abandon the reply")
 	}
-	if m.itemSec != -1 {
-		t.Fatal("cursor should clear after a move")
+	m = press(t, m, "a")
+	m = typeText(t, m, "   ")
+	special(t, m, tea.KeyEnter)
+	if readFile(t, p) != editBoard {
+		t.Fatal("a blank reply must not write")
+	}
+}
+
+func TestReplyPrefillsTheCurrentReply(t *testing.T) {
+	m, _ := interactModel(t)
+	m = press(t, m, "]", "]", "a")
+	m = typeText(t, m, "first")
+	m = special(t, m, tea.KeyEnter)
+	m = press(t, m, "]", "]", "a") // reselect and edit
+	if m.input != "first" {
+		t.Fatalf("edit should prefill, got %q", m.input)
 	}
 }
 
@@ -100,8 +126,19 @@ func TestEditRefusedWhenAgentChangedItem(t *testing.T) {
 	if !strings.Contains(m.notice, "changed") {
 		t.Fatalf("notice %q", m.notice)
 	}
-	if got := readFile(t, p); strings.Contains(got, "[x]") {
-		t.Fatalf("stale edit was written:\n%s", got)
+	if strings.Contains(readFile(t, p), "[x]") {
+		t.Fatal("stale edit was written")
+	}
+}
+
+func TestViewerNeverMovesItems(t *testing.T) {
+	m, p := interactModel(t)
+	m.mouse = true
+	press(t, m, "]", "d", "x", "a", "esc")
+	got := readFile(t, p)
+	b, _ := parseBoard(got)
+	if len(b.Sections[0].Items) != 2 || len(b.Sections[2].Items) != 1 {
+		t.Fatalf("no key or click may move an item between sections:\n%s", got)
 	}
 }
 
@@ -113,23 +150,6 @@ func TestEscClearsItemCursor(t *testing.T) {
 	}
 }
 
-func TestMouseClickTicksBoxOnlyInMouseMode(t *testing.T) {
-	m, p := interactModel(t)
-	line := m.itemStarts[0][0]
-	click := tea.MouseMsg{X: 0, Y: line - m.vp.YOffset, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
-	next, _ := m.Update(click)
-	m = next.(model)
-	if strings.Contains(readFile(t, p), "[x]") {
-		t.Fatal("click must be ignored while mouse mode is off")
-	}
-	m = press(t, m, "M")
-	next, _ = m.Update(click)
-	if !strings.Contains(readFile(t, p), "- [x] Ship it") {
-		t.Fatal("click on the box should tick in mouse mode")
-	}
-	_ = next
-}
-
 func TestEditPreservesFileMode(t *testing.T) {
 	m, p := interactModel(t)
 	os.Chmod(p, 0o600)
@@ -139,15 +159,9 @@ func TestEditPreservesFileMode(t *testing.T) {
 	}
 }
 
-func TestMouseClickOnStatusBarRowIgnored(t *testing.T) {
-	m, p := interactModel(t)
-	m = press(t, m, "M")
-	m.vp.SetYOffset(0)
-	// The status bar row sits at y == viewport height; it must not map to
-	// content below the fold even when a checkbox starts on that line.
-	m.mouseClick(0, m.vp.Height)
-	if strings.Contains(readFile(t, p), "[x]") || m.itemSec != -1 {
-		t.Fatal("status bar click acted on an item")
+func TestCleanAnswerIsOneLine(t *testing.T) {
+	if got := cleanAnswer(" a\nb\t\x1b[31mc  d "); got != "a b [31mc d" {
+		t.Fatalf("%q", got)
 	}
 }
 
@@ -156,19 +170,19 @@ const questionBoard = `# Board
 ## 🧠 Needs you
 
 - Which name?
-  Ask:
+  Ask: What should we call it?
   Next: answer
 - Merge now?
-  Ask: yes | no
+  Ask: Anything blocking the merge?
   Next: answer
 - Old question
-  Ask: yes | no
+  Ask: Fine?
   Answer: yes
 
 ## ✅ Done
 
 - shipped
-  Ask: yes | no
+  Ask: Was it fine?
 `
 
 func questionModel(t *testing.T) (model, string) {
@@ -176,75 +190,6 @@ func questionModel(t *testing.T) (model, string) {
 	p := filepath.Join(t.TempDir(), "sidecar.md")
 	writeFile(t, p, questionBoard)
 	return testModel(t, p), p
-}
-
-func typeText(t *testing.T, m model, s string) model {
-	t.Helper()
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
-	return next.(model)
-}
-
-func special(t *testing.T, m model, k tea.KeyType) model {
-	t.Helper()
-	next, _ := m.Update(tea.KeyMsg{Type: k})
-	return next.(model)
-}
-
-func TestFreeTextAnswer(t *testing.T) {
-	m, p := questionModel(t)
-	m = press(t, m, "]", "a")
-	if !m.typing {
-		t.Fatal("a on an Ask: item should open the answer line")
-	}
-	// q, d, and ] are text while typing — they must not quit, move, or select.
-	m = typeText(t, m, "qd] nap")
-	m = special(t, m, tea.KeySpace)
-	m = typeText(t, m, "time")
-	m = special(t, m, tea.KeyBackspace)
-	m = special(t, m, tea.KeyEnter)
-	got := readFile(t, p)
-	if !strings.Contains(got, "  Ask:\n  Answer: qd] nap tim\n  Next: answer") {
-		t.Fatalf("answer not written under the Ask: line:\n%s", got)
-	}
-	if m.typing || m.input != "" {
-		t.Fatal("typing state should clear after enter")
-	}
-}
-
-func TestFreeTextEscAbandons(t *testing.T) {
-	m, p := questionModel(t)
-	m = press(t, m, "]", "a")
-	m = typeText(t, m, "nope")
-	m = special(t, m, tea.KeyEsc)
-	if m.typing || strings.Contains(readFile(t, p), "Answer: nope") {
-		t.Fatal("esc must abandon the answer")
-	}
-}
-
-func TestFreeTextEmptyWritesNothing(t *testing.T) {
-	m, p := questionModel(t)
-	m = press(t, m, "]", "a")
-	m = typeText(t, m, "  ")
-	special(t, m, tea.KeyEnter)
-	if readFile(t, p) != questionBoard {
-		t.Fatal("blank answer must not write")
-	}
-}
-
-func TestFreeTextOnQuestionWithOptions(t *testing.T) {
-	m, p := questionModel(t)
-	m = press(t, m, "]", "]", "a")
-	m = typeText(t, m, "yes, after lunch")
-	special(t, m, tea.KeyEnter)
-	if !strings.Contains(readFile(t, p), "  Answer: yes, after lunch\n") {
-		t.Fatalf("custom answer on an optioned question:\n%s", readFile(t, p))
-	}
-}
-
-func TestCleanAnswerIsOneLine(t *testing.T) {
-	if got := cleanAnswer(" a\nb\t\x1b[31mc  d "); got != "a b [31mc d" {
-		t.Fatalf("%q", got)
-	}
 }
 
 func TestPendingQuestionsCountsOpenOnesOutsideDone(t *testing.T) {
@@ -259,17 +204,12 @@ func TestPendingQuestionsCountsOpenOnesOutsideDone(t *testing.T) {
 
 func TestQuestionNavigationSkipsAnsweredAndWraps(t *testing.T) {
 	m, _ := questionModel(t)
-	m = press(t, m, "}")
-	if it, _, _ := m.selected(); it.Key != "Which name?" {
-		t.Fatalf("first: %q", it.Key)
-	}
-	m = press(t, m, "}")
-	if it, _, _ := m.selected(); it.Key != "Merge now?" {
-		t.Fatalf("second: %q", it.Key)
-	}
-	m = press(t, m, "}")
-	if it, _, _ := m.selected(); it.Key != "Which name?" {
-		t.Fatalf("wrap: %q", it.Key)
+	want := []string{"Which name?", "Merge now?", "Which name?"}
+	for i, w := range want {
+		m = press(t, m, "}")
+		if it, _, _ := m.selected(); it.Key != w {
+			t.Fatalf("step %d: %q, want %q", i, it.Key, w)
+		}
 	}
 	m = press(t, m, "{")
 	if it, _, _ := m.selected(); it.Key != "Merge now?" {
@@ -277,20 +217,10 @@ func TestQuestionNavigationSkipsAnsweredAndWraps(t *testing.T) {
 	}
 }
 
-func TestQuestionNavigationFromAnsweredItemSteps(t *testing.T) {
-	m, _ := questionModel(t)
-	m = press(t, m, "]", "]", "]") // the answered item
-	m = press(t, m, "}")
-	if it, _, _ := m.selected(); it.Key != "Which name?" {
-		t.Fatalf("next from answered wraps to first question, got %q", it.Key)
-	}
-}
-
 func TestQuestionNavigationNoneWaiting(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "sidecar.md")
 	writeFile(t, p, "## 🧠 Needs you\n\n- just a note\n")
-	m := testModel(t, p)
-	m = press(t, m, "}")
+	m := press(t, testModel(t, p), "}")
 	if !strings.Contains(m.notice, "no questions") {
 		t.Fatalf("notice %q", m.notice)
 	}

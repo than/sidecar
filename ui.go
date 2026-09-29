@@ -92,12 +92,12 @@ type model struct {
 	mouse            bool
 	typing           bool   // a reply is being typed under the selected item
 	input            string // the reply typed so far
-	hover            hoverChip
+	hover            hoverTarget
 	undo             []undoEntry
 }
 
 func newModel(path string, noFlash bool) model {
-	return model{path: path, noFlash: noFlash, collapsed: map[string]bool{}, cursor: -1, itemSec: -1, itemIdx: -1, hover: hoverChip{line: -1}}
+	return model{path: path, noFlash: noFlash, collapsed: map[string]bool{}, cursor: -1, itemSec: -1, itemIdx: -1, hover: hoverTarget{line: -1}}
 }
 
 func (m model) Init() tea.Cmd {
@@ -381,20 +381,25 @@ func (m *model) reload(force bool) (changed bool) {
 // (applyCursorHighlight) — at the current flash and cursor state.
 func (m *model) compose() string {
 	lines := m.renderedLines
-	// Overlays that swap whole lines work on a copy, before any tint is
-	// layered on: the hovered button turns solid, and a reply being typed
-	// replaces its item's button row.
+	// Overlays that swap or add a line work on a copy, before any tint is
+	// layered on: the hovered bullet or question turns solid, and a reply
+	// being typed is drawn under its item.
 	if m.hover.line >= 0 && m.hover.line < len(lines) {
 		lines = append([]string(nil), lines...)
-		lines[m.hover.line] = strings.Replace(lines[m.hover.line], styleChip(m.hover.chip), hotChip(m.hover.chip), 1)
+		lines[m.hover.line] = paintHover(lines[m.hover.line], m.hover.kind)
 	}
-	if l, text, ok := m.typingRow(m.renderWidth()); ok && l < len(lines) {
-		lines = append([]string(nil), lines...)
-		lines[l] = text
+	if l, text, insert, ok := m.typingRow(m.renderWidth()); ok && l <= len(lines) {
+		copied := append([]string(nil), lines...)
+		if insert {
+			copied = append(copied[:l], append([]string{text}, copied[l:]...)...)
+		} else {
+			copied[l] = text
+		}
+		lines = copied
 	}
 	display := composeMarked(lines, m.changed, m.lineFlash && !m.noFlash, m.renderWidth())
 	display = applyCursorHighlight(display, m.headerLines, m.cursor, m.renderWidth())
-	return applyItemHighlight(display, m.itemStarts, m.itemSec, m.itemIdx, 0, m.renderWidth())
+	return applyItemHighlight(display, m.itemStarts, m.itemSec, m.itemIdx, m.renderWidth())
 }
 
 // recompose re-renders the cached lines for the current flash state without
