@@ -159,6 +159,7 @@ func entryStyleRules(sections []Section, bullet string) string {
 		}
 		b.WriteString(" until it needs a decision, and then the `Next:` line asks for that decision.\n")
 	}
+	b.WriteString("\nAn entry asks a quick question with an indented `Ask: yes | no` line — options separated by `|`, any words. The human answers in the viewer, and an `Answer:` line appears under it; read it on your next turn and act on it. A `- [ ]` checklist item works the same way — the human ticks it, and it reads `- [x]`.\n")
 	return b.String()
 }
 

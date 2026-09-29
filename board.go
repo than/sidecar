@@ -113,9 +113,17 @@ func parseBoard(raw string) (Board, bool) {
 	return b, len(b.Sections) > 0
 }
 
-// normalizeItem strips the bullet and collapses whitespace on the first line.
+// normalizeItem strips the bullet and task-list marker and collapses whitespace on the first line.
 func normalizeItem(line string) string {
 	s := strings.TrimSpace(line)
 	s = strings.TrimPrefix(s, "- ")
+	// A task-list marker is state, not identity: ticking an item must read
+	// as the same item edited, not one removed and another added.
+	for _, m := range []string{"[ ] ", "[x] ", "[X] "} {
+		if strings.HasPrefix(s, m) {
+			s = strings.TrimPrefix(s, m)
+			break
+		}
+	}
 	return strings.Join(strings.Fields(s), " ")
 }

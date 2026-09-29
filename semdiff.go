@@ -68,7 +68,7 @@ func semanticDiff(old, new Board) []string {
 		case ot != nt:
 			moved = append(moved, fmt.Sprintf("moved %s→%s: %q", ot, nt, title(n.item.Key)))
 		case o.item.Raw != n.item.Raw:
-			edited = append(edited, fmt.Sprintf("edited %s: %q", nt, title(n.item.Key)))
+			edited = append(edited, fmt.Sprintf("edited %s: %q%s", nt, title(n.item.Key), humanChange(o.item, n.item)))
 		}
 	}
 
@@ -360,4 +360,25 @@ func hunkHeader(o, dels, n, adds int) string {
 		return fmt.Sprintf("%d,%d", pos, count)
 	}
 	return fmt.Sprintf("@@ -%s +%s @@", side(o, dels), side(n, adds))
+}
+
+// humanChange names the reader-facing state changes the viewer writes — a
+// ticked box or an answered prompt — so the agent sees the decision in the
+// diff itself, not just that the item changed.
+func humanChange(old, new BoardItem) string {
+	var out string
+	switch ot, nt := isTicked(old), isTicked(new); {
+	case isCheckbox(new) && ot != nt && nt:
+		out += " — ticked"
+	case isCheckbox(new) && ot != nt:
+		out += " — unticked"
+	}
+	if a := answerOf(new); a != answerOf(old) && a != "" {
+		out += fmt.Sprintf(" — answered %q", a)
+	}
+	return out
+}
+
+func isTicked(it BoardItem) bool {
+	return strings.HasPrefix(strings.ToLower(firstLine(it.Raw)), ticked)
 }

@@ -34,6 +34,11 @@ keys:  j/k, arrows, PgUp/PgDn                scroll
        g / G                                top / bottom
        tab / shift+tab                      move between sections
        enter / space                        collapse / expand section
+       ] / [                                select next / previous item
+         x  tick a - [ ] item               1-9  answer an "Ask:" option
+         y / n / d  answer yes / no / done  d    otherwise move item to Done
+         esc  deselect
+       M                                    mouse mode: click an item, click its box
        r                                    force reload
        q                                    quit
 

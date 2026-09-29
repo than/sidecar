@@ -82,10 +82,18 @@ type model struct {
 	collapsed   map[string]bool
 	cursor      int
 	headerLines []int
+
+	// Interactive updates (interact.go). itemSec/itemIdx select a board
+	// item, -1 for none; itemStarts maps items to rendered lines. notice is
+	// a one-shot status-bar message; mouse is mouse mode (M).
+	itemSec, itemIdx int
+	itemStarts       [][]int
+	notice           string
+	mouse            bool
 }
 
 func newModel(path string, noFlash bool) model {
-	return model{path: path, noFlash: noFlash, collapsed: map[string]bool{}, cursor: -1}
+	return model{path: path, noFlash: noFlash, collapsed: map[string]bool{}, cursor: -1, itemSec: -1, itemIdx: -1}
 }
 
 func (m model) Init() tea.Cmd {
@@ -98,10 +106,30 @@ func tick() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		if m.mouse && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			m.mouseClick(msg.X, msg.Y)
+			return m, nil
+		}
+
 	case tea.KeyMsg:
+		m.notice = ""
+		if m.itemKey(msg.String()) {
+			return m, nil
+		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "]":
+			m.moveItemCursor(1)
+			return m, nil
+		case "[":
+			m.moveItemCursor(-1)
+			return m, nil
+		case "M":
+			return m, m.toggleMouse()
+		case "esc":
+			return m, nil
 		case "r":
 			if m.reload(true) {
 				m.flashGen++
@@ -295,6 +323,8 @@ func (m *model) reload(force bool) (changed bool) {
 	}
 	lines := strings.Split(rendered, "\n")
 	m.headerLines = sectionHeaderLines(lines)
+	m.itemStarts = itemStartLines(lines, m.headerLines, m.board)
+	m.fixItemCursor()
 
 	var changedMap map[int]bool
 	if m.hasBaseline {
@@ -327,7 +357,8 @@ func (m *model) reload(force bool) (changed bool) {
 // (applyCursorHighlight) — at the current flash and cursor state.
 func (m *model) compose() string {
 	display := composeMarked(m.renderedLines, m.changed, m.lineFlash && !m.noFlash, m.renderWidth())
-	return applyCursorHighlight(display, m.headerLines, m.cursor, m.renderWidth())
+	display = applyCursorHighlight(display, m.headerLines, m.cursor, m.renderWidth())
+	return applyItemHighlight(display, m.itemStarts, m.itemSec, m.itemIdx, 0, m.renderWidth())
 }
 
 // recompose re-renders the cached lines for the current flash state without
@@ -357,6 +388,8 @@ func (m *model) rerenderCollapse() {
 	}
 	m.renderedLines = strings.Split(rendered, "\n")
 	m.headerLines = sectionHeaderLines(m.renderedLines)
+	m.itemStarts = itemStartLines(m.renderedLines, m.headerLines, m.board)
+	m.fixItemCursor()
 	m.changed = nil
 	offset := m.vp.YOffset
 	m.vp.SetContent(m.compose())
@@ -478,6 +511,12 @@ func (m model) statusBar() string {
 
 	left := " 🚗 " + name + " "
 	info := "· " + updated
+	switch h := m.hint(); {
+	case m.notice != "":
+		info = "· " + m.notice
+	case h != "":
+		info = "· " + h
+	}
 	pct := fmt.Sprintf(" %3.0f%% ", m.vp.ScrollPercent()*100)
 
 	pad := m.width - visibleWidth(left) - visibleWidth(info) - visibleWidth(pct)
@@ -524,5 +563,17 @@ func humanSince(d time.Duration) string {
 		return fmt.Sprintf("%dh%02dm", h, int(d.Minutes())-60*h)
 	default:
 		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
+}
+
+// fixItemCursor drops the item selection when the file changed under it —
+// the item is gone, or its section can no longer be mapped to rendered
+// lines — rather than leave the tint on an unrelated line.
+func (m *model) fixItemCursor() {
+	if m.itemSec < 0 {
+		return
+	}
+	if m.itemSec >= len(m.itemStarts) || m.itemIdx >= len(m.itemStarts[m.itemSec]) {
+		m.itemSec, m.itemIdx = -1, -1
 	}
 }
