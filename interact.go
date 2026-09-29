@@ -167,7 +167,7 @@ func optionForKey(key string, opts []string) string {
 	}
 	want := map[string]string{"y": "yes", "n": "no", "d": "done"}[key]
 	for _, o := range opts {
-		if want != "" && strings.EqualFold(o, want) {
+		if want != "" && normalizeOption(o) == want {
 			return o
 		}
 	}
@@ -218,6 +218,9 @@ func (m model) hint() string {
 		parts = append(parts, strings.Join(o, "  "))
 	}
 	parts = append(parts, "d done", "esc")
+	if hasAsk(it) && !m.mouse {
+		parts = append(parts, "M click buttons")
+	}
 	return strings.Join(parts, " · ")
 }
 
@@ -243,7 +246,13 @@ func (m *model) mouseClick(x, y int) {
 			}
 			m.itemSec, m.itemIdx, m.cursor = si, ii, si
 			m.recompose()
-			if it, label, _ := m.selected(); x <= 1 && line == start && isCheckbox(it) {
+			it, label, _ := m.selected()
+			switch opt, free, hit := chipAt(it, m.renderedLines[line], x); {
+			case hit && free:
+				m.typing, m.input = true, ""
+			case hit:
+				m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, opt) }), "answered "+opt)
+			case x <= 1 && line == start && isCheckbox(it):
 				m.apply(label, it, replaceLines(toggleCheckbox), "")
 			}
 			return

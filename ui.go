@@ -320,7 +320,7 @@ func (m *model) reload(force bool) (changed bool) {
 	}
 	displayRaw := raw
 	if boardOK {
-		displayRaw = applyCollapse(raw, board, m.collapsed)
+		displayRaw = applyCollapse(buttonize(raw, board), board, m.collapsed)
 	}
 
 	rendered, err := renderMarkdown(displayRaw, m.renderWidth(), true)
@@ -347,7 +347,7 @@ func (m *model) reload(force bool) (changed bool) {
 		// a live viewer setting, not a property of any one file revision.
 		baseDisplay := m.prevBaseline
 		if baseBoard, ok := parseBoard(m.prevBaseline); ok {
-			baseDisplay = applyCollapse(m.prevBaseline, baseBoard, m.collapsed)
+			baseDisplay = applyCollapse(buttonize(m.prevBaseline, baseBoard), baseBoard, m.collapsed)
 		}
 		if base, berr := renderMarkdown(baseDisplay, m.renderWidth(), true); berr == nil {
 			changedMap = changedLines(strings.Split(base, "\n"), lines)
@@ -393,7 +393,7 @@ func (m *model) rerenderCollapse() {
 	if !m.ready || m.fileMissing || m.loadErr != nil || len(m.board.Sections) == 0 {
 		return
 	}
-	displayRaw := applyCollapse(m.raw, m.board, m.collapsed)
+	displayRaw := applyCollapse(buttonize(m.raw, m.board), m.board, m.collapsed)
 	rendered, err := renderMarkdown(displayRaw, m.renderWidth(), true)
 	if err != nil {
 		return // m.raw already rendered fine on the last successful reload

@@ -39,7 +39,7 @@ keys:  j/k, arrows, PgUp/PgDn                scroll
          y / n / d  answer yes / no / done  d    otherwise move item to Done
          a  type a free-text answer         } / {  next / previous open question
          esc  deselect
-       M                                    mouse mode: click an item, click its box
+       M                                    mouse mode: click an item, its box, or an [ answer ] button
        r                                    force reload
        q                                    quit
 

@@ -16,6 +16,10 @@ Plain markdown, nothing new to parse beyond two line prefixes.
 - An `Ask:` line with no options is an open question; the human answers it with `a`. Free text is collapsed to one line, so an answer never hard-wraps the board.
 - `  Answer: no` — written directly under the `Ask:` line. A new answer replaces the old one, so an item carries at most one.
 
+## Buttons
+
+The file keeps the plain `Ask: ✅ Done | ❌ No` line. At display time the viewer swaps it for one shaded button per option plus a `[ ✎ ]` button that opens the free-text answer — `[ ✅ Done ]  [ ❌ No ]  [ ✎ ]` — and ticks the recorded answer (`[ ✓ ❌ No ]`). In mouse mode a click on a button answers; the keys work without it. Options may carry emoji; `y` / `n` / `d` match by the option's letters (`✅ Done` answers to `d`).
+
 ## Keys
 
 `]` / `[` select the next or previous item. With one selected: `x` ticks; `1`–`9` answer by position; `y` / `n` / `d` answer `yes` / `no` / `done` when offered; `a` opens a free-text answer in the status bar (enter writes it, esc abandons it; every key is text while typing); `}` / `{` select the next or previous unanswered question; `d` otherwise moves the item to ✅ Done; `esc` deselects. `M` toggles mouse mode: a click selects an item, a click on its box ticks it.
