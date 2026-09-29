@@ -90,6 +90,8 @@ type model struct {
 	itemStarts       [][]int
 	notice           string
 	mouse            bool
+	typing           bool   // an answer is being typed in the status bar
+	input            string // the answer typed so far
 }
 
 func newModel(path string, noFlash bool) model {
@@ -113,6 +115,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		if m.typing {
+			m.typeKey(msg)
+			return m, nil
+		}
 		m.notice = ""
 		if m.itemKey(msg.String()) {
 			return m, nil
@@ -125,6 +131,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "[":
 			m.moveItemCursor(-1)
+			return m, nil
+		case "}":
+			m.moveQuestionCursor(1)
+			return m, nil
+		case "{":
+			m.moveQuestionCursor(-1)
 			return m, nil
 		case "M":
 			return m, m.toggleMouse()
@@ -510,14 +522,25 @@ func (m model) statusBar() string {
 	}
 
 	left := " 🚗 " + name + " "
+	pct := fmt.Sprintf(" %3.0f%% ", m.vp.ScrollPercent()*100)
 	info := "· " + updated
+	if q := m.pendingQuestions(); q > 0 && !m.fileMissing && m.loadErr == nil {
+		info += fmt.Sprintf(" · %d awaiting you", q)
+	}
 	switch h := m.hint(); {
+	case m.typing:
+		const lead = "· answer: "
+		room := max(0, m.width-visibleWidth(left)-visibleWidth(pct)-visibleWidth(lead)-1)
+		shown := m.input
+		for visibleWidth(shown) > room && shown != "" {
+			shown = string([]rune(shown)[1:]) // keep the end, where the cursor is
+		}
+		info = lead + shown + "▌"
 	case m.notice != "":
 		info = "· " + m.notice
 	case h != "":
 		info = "· " + h
 	}
-	pct := fmt.Sprintf(" %3.0f%% ", m.vp.ScrollPercent()*100)
 
 	pad := m.width - visibleWidth(left) - visibleWidth(info) - visibleWidth(pct)
 	if pad < 0 {

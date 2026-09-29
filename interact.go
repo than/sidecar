@@ -139,6 +139,9 @@ func (m *model) itemKey(key string) bool {
 	case key == "x" && isCheckbox(it):
 		m.apply(label, it, replaceLines(toggleCheckbox), "")
 		return true
+	case key == "a" && hasAsk(it):
+		m.typing, m.input = true, ""
+		return true
 	case len(opts) > 0 && optionForKey(key, opts) != "":
 		choice := optionForKey(key, opts)
 		m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, choice) }), "answered "+choice)
@@ -201,6 +204,9 @@ func (m model) hint() string {
 		return ""
 	}
 	parts := []string{"[ prev · ] next"}
+	if hasAsk(it) {
+		parts = append(parts, "a type answer")
+	}
 	if isCheckbox(it) {
 		parts = append(parts, "x tick")
 	}
@@ -253,4 +259,82 @@ func (m *model) toggleMouse() tea.Cmd {
 	}
 	m.notice = "mouse off — native selection restored"
 	return tea.DisableMouse
+}
+
+// typeKey handles a keypress while an answer is being typed in the status
+// bar: text appends, backspace deletes, enter writes the answer, esc (or
+// ctrl+c) abandons it. Every key is consumed, so typing "q" or "d" into an
+// answer never quits or moves anything.
+func (m *model) typeKey(msg tea.KeyMsg) {
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyCtrlC:
+		m.typing, m.input = false, ""
+	case tea.KeyEnter:
+		text := cleanAnswer(m.input)
+		m.typing, m.input = false, ""
+		if it, label, ok := m.selected(); ok && text != "" {
+			m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, text) }), "answered")
+		}
+	case tea.KeyBackspace:
+		if r := []rune(m.input); len(r) > 0 {
+			m.input = string(r[:len(r)-1])
+		}
+	case tea.KeySpace:
+		m.input += " "
+	case tea.KeyRunes:
+		m.input += string(msg.Runes)
+	}
+}
+
+// pendingQuestions counts unanswered Ask: items outside the finished
+// sections — what is waiting on the human.
+func (m model) pendingQuestions() int {
+	n := 0
+	for _, s := range m.board.Sections {
+		if strings.HasSuffix(s.Label, "Done") || strings.HasSuffix(s.Label, "Shipped") {
+			continue
+		}
+		for _, it := range s.Items {
+			if isUnanswered(it) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// moveQuestionCursor selects the next (+1) or previous (-1) unanswered
+// question that is visible, wrapping, and says so when none is waiting.
+func (m *model) moveQuestionCursor(delta int) {
+	type pos struct{ s, i int }
+	var all []pos
+	cur := -1
+	for si, starts := range m.itemStarts {
+		for ii := range starts {
+			if si == m.itemSec && ii == m.itemIdx {
+				cur = len(all)
+			}
+			all = append(all, pos{si, ii})
+		}
+	}
+	n := len(all)
+	for step := 1; step <= n; step++ {
+		var idx int
+		switch {
+		case cur >= 0:
+			idx = ((cur+delta*step)%n + n) % n
+		case delta > 0:
+			idx = step - 1
+		default:
+			idx = n - step
+		}
+		p := all[idx]
+		if isUnanswered(m.board.Sections[p.s].Items[p.i]) {
+			m.itemSec, m.itemIdx, m.cursor = p.s, p.i, p.s
+			m.recompose()
+			m.scrollTo(m.itemStarts[p.s][p.i])
+			return
+		}
+	}
+	m.notice = "no questions waiting"
 }

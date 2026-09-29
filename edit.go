@@ -64,6 +64,33 @@ func askOptions(it BoardItem) []string {
 	return nil
 }
 
+// hasAsk reports whether the item carries an "Ask:" line at all — options or
+// not. An Ask: with no options is an open question, answered in free text.
+func hasAsk(it BoardItem) bool {
+	_, rest, _ := strings.Cut(it.Raw, "\n")
+	for _, ln := range strings.Split(rest, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(ln), "Ask:") {
+			return true
+		}
+	}
+	return false
+}
+
+// isUnanswered reports a question still waiting on the human.
+func isUnanswered(it BoardItem) bool { return hasAsk(it) && answerOf(it) == "" }
+
+// cleanAnswer reduces typed text to one plain line: control characters and
+// newlines become spaces, runs of space collapse, and the ends are trimmed.
+func cleanAnswer(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // answerOf returns the item's current "Answer:" value, "" when unanswered.
 func answerOf(it BoardItem) string {
 	_, rest, _ := strings.Cut(it.Raw, "\n")

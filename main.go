@@ -37,6 +37,7 @@ keys:  j/k, arrows, PgUp/PgDn                scroll
        ] / [                                select next / previous item
          x  tick a - [ ] item               1-9  answer an "Ask:" option
          y / n / d  answer yes / no / done  d    otherwise move item to Done
+         a  type a free-text answer         } / {  next / previous open question
          esc  deselect
        M                                    mouse mode: click an item, click its box
        r                                    force reload
