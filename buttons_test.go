@@ -410,3 +410,66 @@ func TestReplyIsTypedInlineUnderTheItem(t *testing.T) {
 		t.Fatalf("esc should bring the buttons back:\n%s", v)
 	}
 }
+
+func TestOneBlankLineSeparatesItems(t *testing.T) {
+	raw := "## 🧠 Needs you\n\n- first\n- second\n  more\n- third\n\n## ✅ Done\n\n- a\n- b\n"
+	got := plainLines(t, raw, nil, 60)
+	text := strings.Join(got, "\n")
+	for _, pair := range [][2]string{{"• first", "• second"}, {"more", "• third"}} {
+		a, b := strings.Index(text, pair[0]), strings.Index(text, pair[1])
+		between := text[a:b]
+		if !strings.Contains(between, "\n\n") || strings.Contains(between, "\n\n\n") {
+			t.Fatalf("want exactly one blank line between %q and %q, got %q\n%s", pair[0], pair[1], between, text)
+		}
+	}
+	if strings.Contains(text, "\n\n\n") {
+		t.Fatalf("no run of blank lines anywhere:\n%s", text)
+	}
+	// Finished items are spaced too.
+	if a, b := strings.Index(text, "• a"), strings.Index(text, "• b"); !strings.Contains(text[a:b], "\n\n") {
+		t.Fatalf("Done items should be spaced:\n%s", text)
+	}
+}
+
+func TestSpacerDoesNotBreakClickingOrSelection(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, p, "## 🧠 Needs you\n\n- first\n- second\n\n## ✅ Done\n\n- old\n")
+	m := testModel(t, p)
+	m.mouse = true
+	m = clickAt(t, m, doneChip, 3) // first row's Done
+	b, _ := parseBoard(readFile(t, p))
+	if len(b.Sections[0].Items) != 1 || b.Sections[0].Items[0].Key != "second" {
+		t.Fatalf("clicked the wrong item's Done:\n%s", readFile(t, p))
+	}
+	m = press(t, m, "]", "]") // items still map one-to-one with spacers present
+	if it, _, ok := m.selected(); !ok || it.Key != "second" {
+		t.Fatalf("selection lost with spacers in the layout")
+	}
+}
+
+func TestButtonsHaveNoBackgroundAtRest(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+	for _, c := range []string{doneChip, replyChip, chipText("Go", true), chipText("Go", false)} {
+		if strings.Contains(styleChip(c), "48;") {
+			t.Fatalf("%q paints a background at rest: %q", c, styleChip(c))
+		}
+	}
+	if !strings.Contains(hotChip(replyChip), "48;") || !strings.Contains(hotChip(doneChip), "48;") {
+		t.Fatal("hovered buttons should paint a background")
+	}
+}
+
+func TestTypingRowHintsHowToSend(t *testing.T) {
+	m, _ := buttonModel(t)
+	m.mouse = true
+	m = clickAt(t, m, replyChip, 3)
+	if v := stripANSI(m.vp.View()); !strings.Contains(v, "type your reply…") || !strings.Contains(v, "⏎ send") {
+		t.Fatalf("empty reply line should say what to do:\n%s", v)
+	}
+	m = typeText(t, m, "hello")
+	if v := stripANSI(m.vp.View()); strings.Contains(v, "type your reply…") || !strings.Contains(v, "💬 hello▌") || !strings.Contains(v, "esc cancel") {
+		t.Fatalf("typed reply should replace the placeholder and keep the hint:\n%s", v)
+	}
+}

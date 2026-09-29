@@ -286,6 +286,9 @@ func (m model) itemAtLine(line int) (si, ii, start int, ok bool) {
 					end++
 				}
 			}
+			for end-1 > start && strings.TrimSpace(stripANSI(m.renderedLines[end-1])) == "" {
+				end-- // the blank spacer after an item is not part of it
+			}
 			if line >= start && line < end && m.board.Sections[si].Items[ii].Key != emptySectionPlaceholder {
 				return si, ii, start, true
 			}
@@ -376,12 +379,24 @@ func (m model) typingRow(width int) (line int, text string, ok bool) {
 	}
 	for l := start; l < len(m.renderedLines); l++ {
 		if strings.Contains(stripANSI(m.renderedLines[l]), doneChip) {
+			const hint = "⏎ send · esc cancel"
+			showHint := width >= 44
 			room := max(4, width-8)
+			if showHint {
+				room = max(4, width-8-visibleWidth(hint)-2)
+			}
 			shown := m.input
+			if shown == "" {
+				shown = "type your reply…"
+			}
 			for visibleWidth(shown) > room && shown != "" {
 				shown = string([]rune(shown)[1:])
 			}
-			return l, "  " + typingStyle.Render(" 💬 "+shown+"▌ "), true
+			row := "  " + typingStyle.Render(" 💬 "+shown+"▌ ")
+			if showHint {
+				row += "  " + buttonRestStyle.Render(hint)
+			}
+			return l, row, true
 		}
 	}
 	return 0, "", false

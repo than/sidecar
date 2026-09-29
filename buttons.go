@@ -32,11 +32,9 @@ var (
 			Foreground(lipgloss.Color("#101010")).Background(lipgloss.Color("#7AA2F7"))
 	buttonGoStyle = lipgloss.NewStyle().Bold(true).
 			Foreground(lipgloss.Color("#101010")).Background(lipgloss.Color("#9ECE6A"))
-	buttonRestStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#8B93A5")).Background(lipgloss.Color("#2B303B"))
-	buttonChosenStyle = lipgloss.NewStyle().Bold(true).
-				Foreground(lipgloss.Color("#9ECE6A")).Background(lipgloss.Color("#2B303B"))
-	countIn = regexp.MustCompile(` \(\d+\)$`)
+	buttonRestStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#8B93A5"))
+	buttonChosenStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#9ECE6A"))
+	countIn           = regexp.MustCompile(` \(\d+\)$`)
 )
 
 // finishedLabel reports a ✅ Done or 📦 Shipped heading, with or without the
@@ -154,6 +152,32 @@ func addButtonRows(lines []string, starts [][]int, board Board, width int) []str
 			insert[end] = packButtons(append(optionChips(it), rowChips(it)...), width)
 		}
 	}
+	// One blank line between items keeps a long list from reading as a wall:
+	// after each item (and its buttons) whose next line is not already blank.
+	for si, s := range board.Sections {
+		if si >= len(starts) {
+			break
+		}
+		for ii := range s.Items {
+			if ii >= len(starts[si]) {
+				continue
+			}
+			end := starts[si][ii] + 1
+			if ii+1 < len(starts[si]) {
+				end = starts[si][ii+1]
+			} else {
+				for end < len(lines) && strings.TrimSpace(stripANSI(lines[end])) != "" {
+					end++
+				}
+			}
+			for end-1 > starts[si][ii] && strings.TrimSpace(stripANSI(lines[end-1])) == "" {
+				end--
+			}
+			if end < len(lines) && strings.TrimSpace(stripANSI(lines[end])) != "" {
+				insert[end] = append(insert[end], "")
+			}
+		}
+	}
 	var out []string
 	for i, ln := range lines {
 		out = append(out, insert[i]...)
@@ -184,8 +208,8 @@ func packButtons(chips []string, width int) []string {
 	return append(rows, cur)
 }
 
-// styleChip paints one button at rest: a quiet grey block, so a screen of
-// items is not a screen of color. A recorded choice keeps its green text.
+// styleChip paints one button at rest: grey text on no background, so a
+// screen of items is not a screen of color. A recorded choice keeps its green text.
 func styleChip(c string) string {
 	if strings.HasPrefix(c, "[ ✓ ") {
 		return buttonChosenStyle.Render(c)
