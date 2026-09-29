@@ -138,3 +138,15 @@ func TestEditPreservesFileMode(t *testing.T) {
 		t.Fatalf("mode %v", st.Mode().Perm())
 	}
 }
+
+func TestMouseClickOnStatusBarRowIgnored(t *testing.T) {
+	m, p := interactModel(t)
+	m = press(t, m, "M")
+	m.vp.SetYOffset(0)
+	// The status bar row sits at y == viewport height; it must not map to
+	// content below the fold even when a checkbox starts on that line.
+	m.mouseClick(0, m.vp.Height)
+	if strings.Contains(readFile(t, p), "[x]") || m.itemSec != -1 {
+		t.Fatal("status bar click acted on an item")
+	}
+}

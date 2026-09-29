@@ -200,7 +200,7 @@ func (m model) hint() string {
 	if !ok {
 		return ""
 	}
-	parts := []string{"[ ] prev  ] next"}
+	parts := []string{"[ prev · ] next"}
 	if isCheckbox(it) {
 		parts = append(parts, "x tick")
 	}
@@ -218,6 +218,9 @@ func (m model) hint() string {
 // mouseClick selects the item under a left click and, in the checkbox
 // gutter, ticks it. Only wired while mouse mode is on.
 func (m *model) mouseClick(x, y int) {
+	if y < 0 || y >= m.vp.Height {
+		return // the status bar row is not content
+	}
 	line := y + m.vp.YOffset
 	for si, starts := range m.itemStarts {
 		for ii, start := range starts {

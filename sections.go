@@ -146,6 +146,7 @@ func entryStyleRules(sections []Section, bullet string) string {
 		"two sentences of detail — more belongs in the PR or issue you link",
 		"bare URLs, each on its own line",
 		"one `Next:` line naming the single next action",
+		"optionally an indented `Ask:` line with options separated by `|`, which the human answers with an `Answer:` line",
 		"entry text on one line — never hard-wrap; the viewer wraps to the pane and source newlines become visible breaks",
 	} {
 		b.WriteString(bullet + r + "\n")
@@ -159,7 +160,7 @@ func entryStyleRules(sections []Section, bullet string) string {
 		}
 		b.WriteString(" until it needs a decision, and then the `Next:` line asks for that decision.\n")
 	}
-	b.WriteString("\nAn entry asks a quick question with an indented `Ask: yes | no` line — options separated by `|`, any words. The human answers in the viewer, and an `Answer:` line appears under it; read it on your next turn and act on it. A `- [ ]` checklist item works the same way — the human ticks it, and it reads `- [x]`.\n")
+	b.WriteString("\nAn entry asks a quick question with an indented `Ask: yes | no` line — options separated by `|`, any words. The human answers in the viewer, and an `Answer:` line appears under it; read it on your next turn, act on it, then move the item out of its section or drop the `Ask:` and `Answer:` pair so it stops asking. A `- [ ]` checklist item works the same way — the human ticks it, and it reads `- [x]`.\n")
 	return b.String()
 }
 
