@@ -157,7 +157,7 @@ func TestDiffNamesTickAndAnswer(t *testing.T) {
 	ob, _ := parseBoard(old)
 	nb, _ := parseBoard(next)
 	got := strings.Join(semanticDiff(ob, nb), "\n")
-	for _, want := range []string{`edited 🧠: "Ship it" — ticked`, `edited 🧠: "Pick" — answered "no"`} {
+	for _, want := range []string{`edited 🧠: "Ship it" — ticked`, `edited 🧠: "Pick" — replied "no"`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in:\n%s", want, got)
 		}

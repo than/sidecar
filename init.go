@@ -521,6 +521,35 @@ func reconcileHookEntry(rel string, sections []Section) map[string]any {
 	}
 }
 
+// midTurnHookEntry is the PostToolUse half of the cycle: after every tool call
+// it asks `sidecar diff --mid-turn` whether the human replied in the viewer,
+// so an answer reaches the agent mid-turn instead of waiting for the next
+// prompt. It stays silent otherwise, fails open on an older binary, and
+// carries the sentinel so a re-run of init replaces it rather than stacking.
+func midTurnHookEntry(rel string) map[string]any {
+	diffCmd := "sidecar diff --mid-turn"
+	if !isDefaultBoardRel(rel) {
+		diffCmd += " " + shSingleQuote(rel)
+	}
+	cmd := "sidecar diff --help </dev/null >/dev/null 2>&1 && " + diffCmd + " 2>/dev/null; true # " + hookSentinel
+	return map[string]any{
+		"hooks": []any{
+			map[string]any{"type": "command", "command": cmd},
+		},
+	}
+}
+
+// addMidTurnHook appends entry under PostToolUse. Call it after
+// mergeReconcileHook, which has already removed any prior sidecar entry.
+func addMidTurnHook(settings, entry map[string]any) {
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		return
+	}
+	ptu, _ := hooks["PostToolUse"].([]any)
+	hooks["PostToolUse"] = append(ptu, entry)
+}
+
 // writeReconcileHook installs a UserPromptSubmit hook — the only hook type
 // that fires every turn, so the queue actually stays current. It merges into
 // an existing .claude/settings.json, replacing any prior sidecar hook
@@ -537,6 +566,7 @@ func writeReconcileHook(root, rel string, sections []Section) (needsAttention bo
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		settings := map[string]any{"hooks": map[string]any{"UserPromptSubmit": []any{entry}}}
+		addMidTurnHook(settings, midTurnHookEntry(rel))
 		if err := writeSettings(path, settings); err != nil {
 			fmt.Fprintln(os.Stderr, "sidecar init:", err)
 			return true
@@ -558,6 +588,7 @@ func writeReconcileHook(root, rel string, sections []Section) (needsAttention bo
 		fmt.Printf(".claude/settings.json has an unexpected shape — add this hook yourself:\n%s\n", snippetJSON(entry))
 		return true
 	}
+	addMidTurnHook(settings, midTurnHookEntry(rel))
 	if err := writeSettings(path, settings); err != nil {
 		fmt.Fprintln(os.Stderr, "sidecar init:", err)
 		return true

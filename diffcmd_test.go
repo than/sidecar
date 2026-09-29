@@ -434,3 +434,33 @@ func TestDefaultBoardPathFreshDefault(t *testing.T) {
 		}
 	})
 }
+
+func TestMidTurnReportsRepliesAndStaysSilentOtherwise(t *testing.T) {
+	dir := t.TempDir()
+	withWorkDir(t, dir, func() {
+		board := filepath.Join(dir, ".sidecar", "sidecar.md")
+		os.MkdirAll(filepath.Dir(board), 0o755)
+		base := "## 🧠 Needs you\n\n- Ship\n  Ask: What changed?\n"
+		os.WriteFile(board, []byte(base), 0o644)
+		run := func() string {
+			var out string
+			out = captureStdout(t, func() { runDiff([]string{"--mid-turn"}) })
+			return out
+		}
+		if run() != "" {
+			t.Fatal("first run seeds silently")
+		}
+		os.WriteFile(board, []byte(base+"  Next: x\n"), 0o644)
+		if got := run(); got != "" {
+			t.Fatalf("an agent-side edit must stay silent mid-turn, got %q", got)
+		}
+		os.WriteFile(board, []byte(base+"  Answer: I fixed the key\n  Next: x\n"), 0o644)
+		got := run()
+		if !strings.Contains(got, `"hookEventName":"PostToolUse"`) || !strings.Contains(got, "replied") || !strings.Contains(got, "I fixed the key") {
+			t.Fatalf("reply not reported as hook JSON: %q", got)
+		}
+		if again := run(); again != "" {
+			t.Fatalf("a reply must be delivered once, got %q", again)
+		}
+	})
+}

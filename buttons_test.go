@@ -12,9 +12,9 @@ const buttonBoard = `# Board
 
 ## 🧠 Needs you
 
-- Merge now?
-  Ask: ✅ Done | ❌ No
-  Next: answer
+- Config rewritten — the deploy script now reads the new keys.
+  Ask: What did you change on your side in the meantime?
+  Next: reply
 
 ## ✅ Done
 
@@ -28,50 +28,78 @@ func buttonModel(t *testing.T) (model, string) {
 	return testModel(t, p), p
 }
 
-func TestButtonizeKeepsLineCountAndDrawsChips(t *testing.T) {
+func TestEveryOpenItemGetsAnActionRowBelowIt(t *testing.T) {
+	raw := "## 🧠 Needs you\n\n- plain\n- has detail\n  more\n\n## ✅ Done\n\n- finished\n"
+	b, _ := parseBoard(raw)
+	got := buttonize(raw, b)
+	row := "  `[ ✅ Done ]` `[ 💬 Reply ]`"
+	if strings.Count(got, row) != 2 {
+		t.Fatalf("want a row under each of the 2 open items, none under Done:\n%s", got)
+	}
+	if !strings.Contains(got, "- plain\n"+row+"\n- has detail\n  more\n"+row+"\n") {
+		t.Fatalf("rows must sit directly below their item:\n%s", got)
+	}
+}
+
+func TestNoRowUnderDoneOrShippedOrPlaceholder(t *testing.T) {
+	raw := "## ✅ Done (1)\n\n- a\n\n## 📦 Shipped\n\n- b\n\n## 🚧 In progress\n\n- " + emptySectionPlaceholder + "\n"
+	b, _ := parseBoard(raw)
+	if got := buttonize(raw, b); strings.Contains(got, "Reply") {
+		t.Fatalf("finished and placeholder items get no buttons:\n%s", got)
+	}
+}
+
+func TestNarrativeAskShowsAsTheQuestion(t *testing.T) {
 	b, _ := parseBoard(buttonBoard)
 	got := buttonize(buttonBoard, b)
-	if strings.Count(got, "\n") != strings.Count(buttonBoard, "\n") {
-		t.Fatal("buttonize changed the line count")
+	if !strings.Contains(got, "  💬 What did you change on your side in the meantime?\n") || strings.Contains(got, "Ask:") {
+		t.Fatalf("question not shown:\n%s", got)
 	}
-	if !strings.Contains(got, "  `[ ✅ Done ]` `[ ❌ No ]` `[ ✎ ]`\n") {
-		t.Fatalf("chips missing:\n%s", got)
-	}
-}
-
-func TestButtonizeTicksTheChosenAnswer(t *testing.T) {
-	raw := strings.Replace(buttonBoard, "  Next: answer", "  Answer: ❌ No\n  Next: answer", 1)
-	b, _ := parseBoard(raw)
-	if got := buttonize(raw, b); !strings.Contains(got, "`[ ✓ ❌ No ]`") || strings.Contains(got, "`[ ❌ No ]`") {
-		t.Fatalf("chosen chip not ticked:\n%s", got)
+	if askOptions(b.Sections[0].Items[0]) != nil {
+		t.Fatal("a question without | has no choices")
 	}
 }
 
-func TestOpenQuestionGetsOnlyTheWriteButton(t *testing.T) {
-	raw := "## 🧠 Needs you\n\n- Name?\n  Ask:\n"
+func TestChoiceAskStillDrawsChoiceButtons(t *testing.T) {
+	raw := "## 🧠 Needs you\n\n- Merge?\n  Ask: ✅ Go | ❌ Hold\n"
 	b, _ := parseBoard(raw)
-	if got := buttonize(raw, b); !strings.Contains(got, "  `[ ✎ ]`") {
-		t.Fatalf("got %q", got)
+	got := buttonize(raw, b)
+	if !strings.Contains(got, "  `[ ✅ Go ]` `[ ❌ Hold ]`\n") {
+		t.Fatalf("choices missing:\n%s", got)
+	}
+	raw2 := strings.Replace(raw, "Ask:", "Answer: ❌ Hold\n  Ask:", 1)
+	b2, _ := parseBoard(raw2)
+	if got := buttonize(raw2, b2); !strings.Contains(got, "`[ ✓ ❌ Hold ]`") {
+		t.Fatalf("recorded choice not ticked:\n%s", got)
+	}
+}
+
+func TestReplyButtonReadsEditOnceReplied(t *testing.T) {
+	raw := "## 🧠 Needs you\n\n- x\n  Answer: did it\n"
+	b, _ := parseBoard(raw)
+	if got := buttonize(raw, b); !strings.Contains(got, "`[ 💬 Edit reply ]`") {
+		t.Fatalf("got:\n%s", got)
+	}
+}
+
+func TestDisplayTextSurvivesCollapseCounts(t *testing.T) {
+	m, _ := buttonModel(t)
+	got := displayText(m.raw, m.board, map[string]bool{"✅ Done": true})
+	if !strings.Contains(got, "## ✅ Done (1)") || strings.Count(got, "[ ✅ Done ]") != 1 {
+		t.Fatalf("got:\n%s", got)
 	}
 }
 
 func TestButtonsRenderInThePane(t *testing.T) {
 	m, _ := buttonModel(t)
 	view := stripANSI(m.vp.View())
-	if !strings.Contains(view, "[ ✅ Done ]") || !strings.Contains(view, "[ ❌ No ]") || strings.Contains(view, "Ask:") {
-		t.Fatalf("pane:\n%s", view)
+	for _, want := range []string{"[ ✅ Done ]", "[ 💬 Reply ]", "What did you change"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("pane missing %q:\n%s", want, view)
+		}
 	}
-}
-
-func TestEmojiOptionsAnswerToLetterKeys(t *testing.T) {
-	m, p := buttonModel(t)
-	m = press(t, m, "]", "n")
-	if got := readFile(t, p); !strings.Contains(got, "Answer: ❌ No") {
-		t.Fatalf("n should pick ❌ No:\n%s", got)
-	}
-	press(t, m, "d")
-	if got := readFile(t, p); !strings.Contains(got, "Answer: ✅ Done") || strings.Count(got, "Answer:") != 1 {
-		t.Fatalf("d should pick ✅ Done:\n%s", got)
+	if strings.Contains(view, "Ask:") {
+		t.Fatalf("raw Ask: line leaked:\n%s", view)
 	}
 }
 
@@ -88,37 +116,125 @@ func clickAt(t *testing.T, m model, text string, x int) model {
 	return m
 }
 
-func TestClickingAButtonAnswers(t *testing.T) {
+func TestClickReplyOpensPrefilledLineWithoutSelectingFirst(t *testing.T) {
 	m, p := buttonModel(t)
-	m = press(t, m, "M")
-	clickAt(t, m, "[ ❌ No ]", 2)
-	if got := readFile(t, p); !strings.Contains(got, "  Answer: ❌ No\n") {
-		t.Fatalf("click did not answer:\n%s", got)
+	m.mouse = true
+	m = clickAt(t, m, replyChip, 3)
+	if !m.typing || m.input != "" {
+		t.Fatalf("reply button should open an empty answer line, typing=%v input=%q", m.typing, m.input)
+	}
+	m = typeText(t, m, "Restarted the worker by hand")
+	special(t, m, tea.KeyEnter)
+	if got := readFile(t, p); !strings.Contains(got, "  Ask: What did you change on your side in the meantime?\n  Answer: Restarted the worker by hand\n") {
+		t.Fatalf("reply not written under the question:\n%s", got)
 	}
 }
 
-func TestClickingTheWriteButtonOpensTyping(t *testing.T) {
-	m, _ := buttonModel(t)
-	m = press(t, m, "M")
-	m = clickAt(t, m, freeChip, 1)
-	if !m.typing {
-		t.Fatal("✎ button should open the answer line")
+func TestEditReplyPrefillsTheExistingText(t *testing.T) {
+	m, p := buttonModel(t)
+	m.mouse = true
+	m = clickAt(t, m, replyChip, 3)
+	m = typeText(t, m, "first")
+	m = special(t, m, tea.KeyEnter)
+	if !strings.Contains(readFile(t, p), "Answer: first") {
+		t.Fatal("setup: reply not written")
+	}
+	m = clickAt(t, m, editReplyChip, 3)
+	if m.input != "first" {
+		t.Fatalf("edit should prefill, got %q", m.input)
+	}
+	m = typeText(t, m, " and second")
+	special(t, m, tea.KeyEnter)
+	if got := readFile(t, p); strings.Count(got, "Answer:") != 1 || !strings.Contains(got, "Answer: first and second") {
+		t.Fatalf("reply not replaced:\n%s", got)
+	}
+}
+
+func TestUnpromptedReplyLandsLastOnAnItemThatAskedNothing(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, p, "## 🧠 Needs you\n\n- Create the API key\n  Next: create it\n")
+	m := testModel(t, p)
+	m.mouse = true
+	m = clickAt(t, m, replyChip, 3)
+	m = typeText(t, m, "made it, pasted in .env")
+	special(t, m, tea.KeyEnter)
+	if got := readFile(t, p); !strings.HasSuffix(got, "  Next: create it\n  Answer: made it, pasted in .env\n") {
+		t.Fatalf("got:\n%s", got)
+	}
+}
+
+func TestClickDoneMovesItAndRecordsWhoDidIt(t *testing.T) {
+	m, p := buttonModel(t)
+	m.mouse = true
+	clickAt(t, m, doneChip, 3)
+	b, _ := parseBoard(readFile(t, p))
+	if len(b.Sections[0].Items) != 0 || len(b.Sections[1].Items) != 2 {
+		t.Fatalf("not moved:\n%s", readFile(t, p))
+	}
+	if answerOf(b.Sections[1].Items[1]) != "✅ Done" {
+		t.Fatalf("Done should leave a reply the hook can read:\n%s", readFile(t, p))
+	}
+}
+
+func TestDoneKeepsAnExistingReply(t *testing.T) {
+	m, p := buttonModel(t)
+	m.mouse = true
+	m = clickAt(t, m, replyChip, 3)
+	m = typeText(t, m, "did it differently")
+	m = special(t, m, tea.KeyEnter)
+	clickAt(t, m, doneChip, 3)
+	if got := readFile(t, p); !strings.Contains(got, "Answer: did it differently") || strings.Contains(got, "Answer: ✅ Done") {
+		t.Fatalf("Done must not overwrite a narrative reply:\n%s", got)
+	}
+}
+
+func TestOptionButtonClickRecordsTheChoice(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, p, "## 🧠 Needs you\n\n- Merge?\n  Ask: Go | Hold\n")
+	m := testModel(t, p)
+	m.mouse = true
+	clickAt(t, m, "[ Hold ]", 2)
+	if got := readFile(t, p); !strings.Contains(got, "  Answer: Hold\n") {
+		t.Fatalf("got:\n%s", got)
 	}
 }
 
 func TestClickBetweenButtonsOnlySelects(t *testing.T) {
 	m, p := buttonModel(t)
-	m = press(t, m, "M")
-	m = clickAt(t, m, "Next: answer", 0)
+	m.mouse = true
+	m = clickAt(t, m, "Next: reply", 0)
 	if m.itemSec < 0 || readFile(t, p) != buttonBoard {
 		t.Fatal("a click off the buttons should select, not write")
 	}
 }
 
-func TestClickIgnoredWithoutMouseMode(t *testing.T) {
+func TestClickIgnoredWhenMouseIsOff(t *testing.T) {
 	m, p := buttonModel(t)
-	clickAt(t, m, "[ ❌ No ]", 2)
+	clickAt(t, m, doneChip, 3)
 	if readFile(t, p) != buttonBoard {
-		t.Fatal("buttons must not respond while mouse mode is off")
+		t.Fatal("buttons must not respond while mouse is off")
+	}
+}
+
+func TestEmojiChoiceAnswersToLetterKeys(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, p, "## 🧠 Needs you\n\n- Merge?\n  Ask: ✅ Done | ❌ No\n")
+	m := testModel(t, p)
+	m = press(t, m, "]", "n")
+	if !strings.Contains(readFile(t, p), "Answer: ❌ No") {
+		t.Fatalf("n should pick ❌ No:\n%s", readFile(t, p))
+	}
+}
+
+func TestAKeyRepliesOnAnyItem(t *testing.T) {
+	m, p := buttonModel(t)
+	m = press(t, m, "]", "a")
+	if !m.typing {
+		t.Fatal("a should open the reply line on any item")
+	}
+	m = typeText(t, m, "ok")
+	special(t, m, tea.KeyEnter)
+	if !strings.Contains(readFile(t, p), "Answer: ok") {
+		t.Fatalf("got:\n%s", readFile(t, p))
 	}
 }

@@ -320,7 +320,7 @@ func (m *model) reload(force bool) (changed bool) {
 	}
 	displayRaw := raw
 	if boardOK {
-		displayRaw = applyCollapse(buttonize(raw, board), board, m.collapsed)
+		displayRaw = displayText(raw, board, m.collapsed)
 	}
 
 	rendered, err := renderMarkdown(displayRaw, m.renderWidth(), true)
@@ -333,7 +333,7 @@ func (m *model) reload(force bool) (changed bool) {
 		m.hasBaseline = false
 		return false
 	}
-	lines := strings.Split(rendered, "\n")
+	lines := styleButtons(strings.Split(rendered, "\n"))
 	m.headerLines = sectionHeaderLines(lines)
 	m.itemStarts = itemStartLines(lines, m.headerLines, m.board)
 	m.fixItemCursor()
@@ -347,10 +347,10 @@ func (m *model) reload(force bool) (changed bool) {
 		// a live viewer setting, not a property of any one file revision.
 		baseDisplay := m.prevBaseline
 		if baseBoard, ok := parseBoard(m.prevBaseline); ok {
-			baseDisplay = applyCollapse(buttonize(m.prevBaseline, baseBoard), baseBoard, m.collapsed)
+			baseDisplay = displayText(m.prevBaseline, baseBoard, m.collapsed)
 		}
 		if base, berr := renderMarkdown(baseDisplay, m.renderWidth(), true); berr == nil {
-			changedMap = changedLines(strings.Split(base, "\n"), lines)
+			changedMap = changedLines(styleButtons(strings.Split(base, "\n")), lines)
 		}
 	}
 	m.renderedLines = lines
@@ -393,12 +393,12 @@ func (m *model) rerenderCollapse() {
 	if !m.ready || m.fileMissing || m.loadErr != nil || len(m.board.Sections) == 0 {
 		return
 	}
-	displayRaw := applyCollapse(buttonize(m.raw, m.board), m.board, m.collapsed)
+	displayRaw := displayText(m.raw, m.board, m.collapsed)
 	rendered, err := renderMarkdown(displayRaw, m.renderWidth(), true)
 	if err != nil {
 		return // m.raw already rendered fine on the last successful reload
 	}
-	m.renderedLines = strings.Split(rendered, "\n")
+	m.renderedLines = styleButtons(strings.Split(rendered, "\n"))
 	m.headerLines = sectionHeaderLines(m.renderedLines)
 	m.itemStarts = itemStartLines(m.renderedLines, m.headerLines, m.board)
 	m.fixItemCursor()

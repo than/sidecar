@@ -52,6 +52,9 @@ func askOptions(it BoardItem) []string {
 	_, rest, _ := strings.Cut(it.Raw, "\n")
 	for _, ln := range strings.Split(rest, "\n") {
 		if v, ok := strings.CutPrefix(strings.TrimSpace(ln), "Ask:"); ok {
+			if !strings.Contains(v, "|") {
+				return nil // a narrative question, not a choice
+			}
 			var opts []string
 			for _, o := range strings.Split(v, "|") {
 				if o = strings.TrimSpace(o); o != "" {
@@ -91,6 +94,18 @@ func cleanAnswer(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// askText is the question on an item's "Ask:" line when it is narrative —
+// no "|" choices — and "" otherwise.
+func askText(it BoardItem) string {
+	_, rest, _ := strings.Cut(it.Raw, "\n")
+	for _, ln := range strings.Split(rest, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(ln), "Ask:"); ok && !strings.Contains(v, "|") {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
 // answerOf returns the item's current "Answer:" value, "" when unanswered.
 func answerOf(it BoardItem) string {
 	_, rest, _ := strings.Cut(it.Raw, "\n")
@@ -102,8 +117,9 @@ func answerOf(it BoardItem) string {
 	return ""
 }
 
-// setAnswer writes "Answer: <option>" directly under the Ask: line,
-// replacing an earlier answer so the item never carries two.
+// setAnswer writes "Answer: <option>" directly under the Ask: line — or last,
+// when the item asked nothing — replacing an earlier answer so the item never
+// carries two.
 func setAnswer(lines []string, option string) ([]string, error) {
 	askAt := -1
 	for i, ln := range lines[1:] {
@@ -113,7 +129,16 @@ func setAnswer(lines []string, option string) ([]string, error) {
 		}
 	}
 	if askAt < 0 {
-		return nil, errors.New("no Ask: line on this item")
+		// An unprompted reply: the human volunteers something about an item
+		// the agent never asked about. It goes last, replacing an earlier one.
+		var out []string
+		for i, ln := range lines {
+			if i > 0 && strings.HasPrefix(strings.TrimSpace(ln), "Answer:") {
+				continue
+			}
+			out = append(out, ln)
+		}
+		return append(out, "  Answer: "+option), nil
 	}
 	indent := lines[askAt][:len(lines[askAt])-len(strings.TrimLeft(lines[askAt], " \t"))]
 	var out []string

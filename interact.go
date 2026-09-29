@@ -139,17 +139,15 @@ func (m *model) itemKey(key string) bool {
 	case key == "x" && isCheckbox(it):
 		m.apply(label, it, replaceLines(toggleCheckbox), "")
 		return true
-	case key == "a" && hasAsk(it):
-		m.typing, m.input = true, ""
+	case key == "a":
+		m.typing, m.input = true, answerOf(it)
 		return true
 	case len(opts) > 0 && optionForKey(key, opts) != "":
 		choice := optionForKey(key, opts)
-		m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, choice) }), "answered "+choice)
+		m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, choice) }), "replied "+choice)
 		return true
 	case key == "d":
-		m.apply(label, it, func(raw string, b Board, si, ii int) (string, error) {
-			return moveItem(raw, b, si, ii, doneLabel(b))
-		}, "moved to Done")
+		m.apply(label, it, doneAndMove, "moved to Done")
 		m.itemSec, m.itemIdx = -1, -1
 		return true
 	}
@@ -203,10 +201,7 @@ func (m model) hint() string {
 	if !ok {
 		return ""
 	}
-	parts := []string{"[ prev · ] next"}
-	if hasAsk(it) {
-		parts = append(parts, "a type answer")
-	}
+	parts := []string{"[ prev · ] next", "a reply"}
 	if isCheckbox(it) {
 		parts = append(parts, "x tick")
 	}
@@ -218,8 +213,8 @@ func (m model) hint() string {
 		parts = append(parts, strings.Join(o, "  "))
 	}
 	parts = append(parts, "d done", "esc")
-	if hasAsk(it) && !m.mouse {
-		parts = append(parts, "M click buttons")
+	if !m.mouse {
+		parts = append(parts, "M mouse on")
 	}
 	return strings.Join(parts, " · ")
 }
@@ -231,6 +226,13 @@ func (m *model) mouseClick(x, y int) {
 		return // the status bar row is not content
 	}
 	line := y + m.vp.YOffset
+	for si, h := range m.headerLines {
+		if h == line {
+			m.cursor = si
+			m.toggleCursor()
+			return
+		}
+	}
 	for si, starts := range m.itemStarts {
 		for ii, start := range starts {
 			end := start + 1
@@ -247,11 +249,14 @@ func (m *model) mouseClick(x, y int) {
 			m.itemSec, m.itemIdx, m.cursor = si, ii, si
 			m.recompose()
 			it, label, _ := m.selected()
-			switch opt, free, hit := chipAt(it, m.renderedLines[line], x); {
-			case hit && free:
-				m.typing, m.input = true, ""
+			switch kind, opt, hit := chipAt(it, m.renderedLines[line], x); {
+			case hit && kind == chipReply:
+				m.typing, m.input = true, answerOf(it)
+			case hit && kind == chipDone:
+				m.apply(label, it, doneAndMove, "moved to Done")
+				m.itemSec, m.itemIdx = -1, -1
 			case hit:
-				m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, opt) }), "answered "+opt)
+				m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, opt) }), "replied "+opt)
 			case x <= 1 && line == start && isCheckbox(it):
 				m.apply(label, it, replaceLines(toggleCheckbox), "")
 			}
@@ -263,10 +268,10 @@ func (m *model) mouseClick(x, y int) {
 func (m *model) toggleMouse() tea.Cmd {
 	m.mouse = !m.mouse
 	if m.mouse {
-		m.notice = "mouse on — click an item, click its box to tick (M to release)"
+		m.notice = "mouse on — click buttons, boxes, items, headers (M to release)"
 		return tea.EnableMouseCellMotion
 	}
-	m.notice = "mouse off — native selection restored"
+	m.notice = "mouse off — native text selection restored (M to click again)"
 	return tea.DisableMouse
 }
 
@@ -282,7 +287,7 @@ func (m *model) typeKey(msg tea.KeyMsg) {
 		text := cleanAnswer(m.input)
 		m.typing, m.input = false, ""
 		if it, label, ok := m.selected(); ok && text != "" {
-			m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, text) }), "answered")
+			m.apply(label, it, replaceLines(func(l []string) ([]string, error) { return setAnswer(l, text) }), "reply sent")
 		}
 	case tea.KeyBackspace:
 		if r := []rune(m.input); len(r) > 0 {
@@ -346,4 +351,24 @@ func (m *model) moveQuestionCursor(delta int) {
 		}
 	}
 	m.notice = "no questions waiting"
+}
+
+// doneAndMove records "✅ Done" as the reply when the human has said nothing
+// else — so the agent's hook can tell a human finished it — then moves the
+// item to ✅ Done.
+func doneAndMove(raw string, b Board, si, ii int) (string, error) {
+	it := b.Sections[si].Items[ii]
+	if answerOf(it) == "" {
+		var err error
+		raw, err = replaceLines(func(l []string) ([]string, error) { return setAnswer(l, "✅ Done") })(raw, b, si, ii)
+		if err != nil {
+			return "", err
+		}
+		nb, ok := parseBoard(raw)
+		if !ok {
+			return "", errBoardChanged
+		}
+		b = nb
+	}
+	return moveItem(raw, b, si, ii, doneLabel(b))
 }

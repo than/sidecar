@@ -160,7 +160,7 @@ func entryStyleRules(sections []Section, bullet string) string {
 		}
 		b.WriteString(" until it needs a decision, and then the `Next:` line asks for that decision.\n")
 	}
-	b.WriteString("\nAn entry asks a quick question with an indented `Ask: yes | no` line — options separated by `|`, any words, emoji welcome (`Ask: ✅ Done | ❌ No`); the viewer draws each option as a button — or no options, for an open question the human answers in their own words. The human answers in the viewer, and an `Answer:` line appears under it; read it on your next turn, act on it, then move the item out of its section or drop the `Ask:` and `Answer:` pair so it stops asking. A `- [ ]` checklist item works the same way — the human ticks it, and it reads `- [x]`.\n")
+	b.WriteString("\nWhen a turn ends, leave its result as an entry and, under it, an indented `Ask:` line with one narrative question — \"what did you change on your side?\", \"how did the deploy go?\" — never a yes/no. Every open entry shows the human a `[ ✅ Done ]` and a `[ 💬 Reply ]` button; a reply lands under the entry as an `Answer:` line, and `✅ Done` moves it to Done with `Answer: ✅ Done`. Sidecar's hook reports the reply after your next tool call, so read it, act on it, then clear the `Ask:` and `Answer:` lines or move the entry. Choices are optional: `Ask: ✅ Go | ❌ Hold` draws a button for each.\n")
 	return b.String()
 }
 

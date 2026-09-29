@@ -241,14 +241,6 @@ func TestFreeTextOnQuestionWithOptions(t *testing.T) {
 	}
 }
 
-func TestAKeyIgnoredWithoutAsk(t *testing.T) {
-	m, _ := interactModel(t)
-	m = press(t, m, "]", "a")
-	if m.typing {
-		t.Fatal("a must only open on an item that asks")
-	}
-}
-
 func TestCleanAnswerIsOneLine(t *testing.T) {
 	if got := cleanAnswer(" a\nb\t\x1b[31mc  d "); got != "a b [31mc d" {
 		t.Fatalf("%q", got)

@@ -66,7 +66,7 @@ func semanticDiff(old, new Board) []string {
 		ot, nt := sectionTag(o.section), sectionTag(n.section)
 		switch {
 		case ot != nt:
-			moved = append(moved, fmt.Sprintf("moved %s→%s: %q", ot, nt, title(n.item.Key)))
+			moved = append(moved, fmt.Sprintf("moved %s→%s: %q%s", ot, nt, title(n.item.Key), humanChange(o.item, n.item)))
 		case o.item.Raw != n.item.Raw:
 			edited = append(edited, fmt.Sprintf("edited %s: %q%s", nt, title(n.item.Key), humanChange(o.item, n.item)))
 		}
@@ -374,11 +374,18 @@ func humanChange(old, new BoardItem) string {
 		out += " — unticked"
 	}
 	if a := answerOf(new); a != answerOf(old) && a != "" {
-		out += fmt.Sprintf(" — answered %q", a)
+		out += fmt.Sprintf(" — replied %q", truncateRunes(a, 400))
 	}
 	return out
 }
 
 func isTicked(it BoardItem) bool {
 	return strings.HasPrefix(strings.ToLower(firstLine(it.Raw)), ticked)
+}
+
+func truncateRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
 }
