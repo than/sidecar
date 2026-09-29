@@ -161,7 +161,7 @@ func TestReplyOnItemWithoutQuestionIsInsertedAfterIt(t *testing.T) {
 		rows = append(rows, strings.TrimRight(l, " "))
 	}
 	v := strings.Join(rows, "\n")
-	if !strings.Contains(v, "• Second item.\n ↳ unprompted note▌") {
+	if !strings.Contains(v, "• Second item.\n   ↳ unprompted note▌") {
 		t.Fatalf("typed line should appear under the item:\n%s", v)
 	}
 	special(t, m, tea.KeyEnter)
@@ -208,11 +208,11 @@ func TestHoverPaintsBulletAndQuestion(t *testing.T) {
 	rest := m.vp.View()
 
 	m = mouseAt(t, m, "• Config rewritten", 0, tea.MouseActionMotion, tea.MouseButtonNone)
-	if m.hover.kind != hoverBullet || m.vp.View() == rest || !strings.Contains(m.vp.View(), bulletHotStyle.Render("•")) {
+	if m.hover.kind != hoverBullet || m.vp.View() == rest || !strings.Contains(m.vp.View(), bulletHotStyle.Render("• Co")) {
 		t.Fatalf("hovering the bullet should paint it solid (hover %+v)", m.hover)
 	}
 	m = mouseAt(t, m, "? What did you change", 4, tea.MouseActionMotion, tea.MouseButtonNone)
-	if m.hover.kind != hoverQuestion || !strings.Contains(m.vp.View(), "\x1b[4") && !strings.Contains(m.vp.View(), ";4;") && !strings.Contains(m.vp.View(), "[1;4") {
+	if m.hover.kind != hoverQuestion || !strings.Contains(m.vp.View(), questionHotStyle.Render("  ? What did you change on your side in the meantime?")) {
 		t.Fatalf("hovering the question should underline it (hover %+v)", m.hover)
 	}
 	m = mouseAt(t, m, "Next: reply", 0, tea.MouseActionMotion, tea.MouseButtonNone)
@@ -297,9 +297,120 @@ func TestControlsWorkAtEveryWidth(t *testing.T) {
 			t.Fatalf("width %d: bullet click did nothing (notice %q)", w, m2.notice)
 		}
 		writeFile(t, p, wideBoard)
-		m3 := clickAt(t, m, "? What did you change", 2)
+		m3 := clickAt(t, m, "? What", 2)
 		if !m3.typing {
 			t.Fatalf("width %d: question click did nothing (notice %q)", w, m3.notice)
 		}
+	}
+}
+
+const longQuestionBoard = `# Board
+
+## 🧠 Needs you
+
+- Result of the turn.
+  Ask: After relaunching, does ticking a bullet and answering a question feel right, or is something still missing from the flow?
+  Next: review.
+`
+
+func TestQuestionIsIndentedAndOneColorOnEveryWrappedLine(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+	p := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, p, longQuestionBoard)
+	m := testModel(t, p) // 60 wide: the question wraps
+	var block []string
+	for _, ln := range m.renderedLines {
+		plain := stripANSI(ln)
+		if strings.HasPrefix(plain, "  ? ") || (len(block) > 0 && strings.HasPrefix(plain, "    ") && strings.TrimSpace(plain) != "") {
+			if !strings.HasPrefix(ln, "\x1b") || !strings.Contains(ln, "229;192;123") {
+				t.Fatalf("question line lost its color: %q", ln)
+			}
+			block = append(block, plain)
+		}
+	}
+	if len(block) < 2 {
+		t.Fatalf("expected the question to wrap over several lines, got %q", block)
+	}
+	for _, l := range block[1:] {
+		if !strings.HasPrefix(l, "    ") {
+			t.Fatalf("wrapped lines should hang under the text: %q", l)
+		}
+	}
+	if !strings.Contains(strings.Join(strings.Fields(strings.Join(block, " ")), " "), "still missing from the flow?") {
+		t.Fatalf("question text lost: %q", block)
+	}
+}
+
+func TestClickOnAWrappedQuestionLineOpensReply(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, p, longQuestionBoard)
+	m := testModel(t, p)
+	m.mouse = true
+	m = clickAt(t, m, "still missing", 1) // the last wrapped line
+	if !m.typing {
+		t.Fatalf("any line of the question should open the reply (notice %q)", m.notice)
+	}
+}
+
+func TestBulletTargetIsFourCellsWide(t *testing.T) {
+	for _, x := range []int{0, 1, 2, 3} {
+		m, p := marksModel(t)
+		clickAt(t, m, "• Config rewritten", x)
+		if !strings.Contains(readFile(t, p), "[x] Config") {
+			t.Fatalf("a click %d cells in should tick", x)
+		}
+	}
+	m, p := marksModel(t)
+	clickAt(t, m, "• Config rewritten", 4)
+	if readFile(t, p) != marksBoard {
+		t.Fatal("a click past the target must not tick")
+	}
+}
+
+func TestJKMoveBetweenItemsAndScrollWhenThereAreNone(t *testing.T) {
+	m, _ := marksModel(t)
+	m = press(t, m, "j")
+	if it, _, ok := m.selected(); !ok || !strings.HasPrefix(it.Key, "Config rewritten") {
+		t.Fatalf("j should select the first item, got %+v", it)
+	}
+	m = press(t, m, "j")
+	if it, _, _ := m.selected(); it.Key != "Second item." {
+		t.Fatalf("j should move down, got %q", it.Key)
+	}
+	m = press(t, m, "k")
+	if it, _, _ := m.selected(); !strings.HasPrefix(it.Key, "Config rewritten") {
+		t.Fatalf("k should move up, got %q", it.Key)
+	}
+	// No items at all: j is plain scrolling.
+	p := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, p, manyLines(100, "x"))
+	s := testModel(t, p)
+	before := s.vp.YOffset
+	s = press(t, s, "j")
+	if s.vp.YOffset != before+1 {
+		t.Fatalf("with nothing to select j should scroll (offset %d → %d)", before, s.vp.YOffset)
+	}
+}
+
+func TestSpaceTicksAndEnterReplies(t *testing.T) {
+	m, p := marksModel(t)
+	m = press(t, m, "j", " ")
+	if !strings.Contains(readFile(t, p), "- [x] Config rewritten") {
+		t.Fatalf("space should tick the selected item:\n%s", readFile(t, p))
+	}
+	m = special(t, m, tea.KeyEnter)
+	if !m.typing {
+		t.Fatal("enter should open the reply")
+	}
+}
+
+func TestTabLeavesItemSelectionForSections(t *testing.T) {
+	m, _ := marksModel(t)
+	m = press(t, m, "j")
+	m = special(t, m, tea.KeyTab)
+	if m.itemSec != -1 {
+		t.Fatal("tab moves between sections and drops the item selection")
 	}
 }

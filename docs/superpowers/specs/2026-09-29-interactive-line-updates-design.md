@@ -11,8 +11,8 @@ The viewer is the human's channel back to the agent. The agent owns the board an
 
 ## What the human sees and does
 
-- **The bullet is the control.** Click `•` and it turns into `✓`; the file gets `- [x]`. Click again and it is a plain bullet. `x` does the same on the selected item.
-- **`? question`** — an `Ask:` line is drawn as `? …` in the accent color. Click it, or press `a` on the item, and a reply line opens under the item; Enter writes it, esc abandons it. The reply shows as `↳ …`. The reply line is pre-filled with the current reply so it can be edited, and shows `type your reply… ⏎ send · esc cancel` when empty.
+- **The bullet is the control.** Click within the first four columns of an item's first line and `•` turns into `✓`; the file gets `- [x]`. Click again and it is a plain bullet. `space` does the same on the selected item.
+- **`? question`** — an `Ask:` line is drawn as an indented `? …` block in one accent color, wrapped with a hanging indent. Click any line of it, or press `enter` on the item, and a reply line opens under the item; Enter writes it, esc abandons it. The reply shows as `↳ …`. The reply line is pre-filled with the current reply so it can be edited, and shows `type your reply… ⏎ send · esc cancel` when empty.
 - Whatever is clickable — bullet or question — turns solid under the pointer; nothing else changes on hover.
 - One blank line separates items.
 - The viewer never moves an item between sections. Filing stays with the agent.
@@ -40,7 +40,7 @@ Plain markdown; the file never contains a control.
 
 ## Keyboard
 
-`]` / `[` select an item, `x` ticks, `a` replies, `}` / `{` jump between unanswered questions, `u` undoes, `esc` deselects. The status bar counts open questions.
+`j` / `k` move between items (they scroll when the board has none; arrows and the wheel always scroll), `space` ticks, `enter` replies, `}` / `{` jump between unanswered questions, `u` undoes, `esc` deselects, `tab` moves between sections. The status bar counts open questions.
 
 ## Known limits
 

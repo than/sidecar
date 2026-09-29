@@ -13,9 +13,11 @@
 package main
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var (
@@ -60,9 +62,9 @@ func displayText(raw string, board Board, collapsed map[string]bool) string {
 				indent := lines[i][:len(lines[i])-len(strings.TrimLeft(lines[i], " \t"))]
 				switch {
 				case strings.HasPrefix(t, "Ask:"):
-					lines[i] = indent + questionPrefix + strings.TrimSpace(strings.TrimPrefix(t, "Ask:"))
+					lines[i] = indent + questionPrefix + plainMark(strings.TrimSpace(strings.TrimPrefix(t, "Ask:")))
 				case strings.HasPrefix(t, "Answer:"):
-					lines[i] = indent + replyPrefix + strings.TrimSpace(strings.TrimPrefix(t, "Answer:"))
+					lines[i] = indent + replyPrefix + plainMark(strings.TrimSpace(strings.TrimPrefix(t, "Answer:")))
 				}
 			}
 		}
@@ -83,27 +85,115 @@ func renderBoardLines(display string, board Board, width int) ([]string, error) 
 		return lines, nil
 	}
 	starts := itemStartLines(lines, sectionHeaderLines(lines), board)
-	return spaceItems(colorMarks(lines, starts), starts), nil
+	lines = rewriteMarks(lines, starts, board, width)
+	starts = itemStartLines(lines, sectionHeaderLines(lines), board) // the reflow can change line counts
+	return spaceItems(lines, starts), nil
 }
 
-// colorMarks paints each question in the accent color and each reply green.
-// Only lines inside a mapped item are touched, so body text that happens to
-// begin "? " elsewhere is left alone.
-func colorMarks(lines []string, starts [][]int) []string {
-	out := append([]string(nil), lines...)
-	for _, ss := range starts {
+// plainMark is question or reply text as glamour will show it: the markdown
+// emphasis and code marks are dropped, so the words can be found again in the
+// rendered lines.
+func plainMark(s string) string { return strings.NewReplacer("`", "", "*", "").Replace(s) }
+
+// markBlock finds the rendered lines of a question or reply inside an item's
+// lines [from, to): the line that begins with prefix, plus the lines glamour
+// wrapped it onto — followed by matching the words of text one by one. ok is
+// false when no line begins with prefix.
+func markBlock(lines []string, from, to int, prefix, text string) (first, last int, ok bool) {
+	words := strings.Fields(text)
+	for l := from; l < to && l < len(lines); l++ {
+		t := strings.TrimLeft(strings.TrimRight(stripANSI(lines[l]), " "), " ")
+		if !strings.HasPrefix(t, prefix) {
+			continue
+		}
+		got := strings.Fields(strings.TrimPrefix(t, prefix))
+		last = l
+		for last+1 < to && last+1 < len(lines) && len(got) < len(words) {
+			more := strings.Fields(stripANSI(lines[last+1]))
+			if len(more) == 0 || len(got)+len(more) > len(words) || !equalWords(words[len(got):len(got)+len(more)], more) {
+				break
+			}
+			got = append(got, more...)
+			last++
+		}
+		return l, last, true
+	}
+	return 0, 0, false
+}
+
+func equalWords(a, b []string) bool {
+	for i := range b {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// reflow lays "prefix text" out under an item: indented two, wrapped to width,
+// continuation lines hanging under the text, every line in style.
+func reflow(prefix, text string, width int, style lipgloss.Style) []string {
+	const indent = "  "
+	hang := strings.Repeat(" ", len(indent)+visibleWidth(prefix))
+	cur, curW, fresh := indent+prefix, len(indent)+visibleWidth(prefix), true
+	var rows []string
+	for _, w := range strings.Fields(text) {
+		ww := visibleWidth(w)
+		if !fresh && curW+1+ww > width {
+			rows = append(rows, style.Render(cur))
+			cur, curW, fresh = hang, len(hang), true
+		}
+		if !fresh {
+			cur += " "
+			curW++
+		}
+		cur += w
+		curW += ww
+		fresh = false
+	}
+	return append(rows, style.Render(cur))
+}
+
+// rewriteMarks redraws each mapped item's question and reply as an indented,
+// wrapped block in one color — glamour wraps them at column 0 and leaves the
+// wrapped lines uncolored.
+func rewriteMarks(lines []string, starts [][]int, board Board, width int) []string {
+	type swap struct {
+		first, last int
+		rows        []string
+	}
+	var swaps []swap
+	for si, ss := range starts {
 		for ii, start := range ss {
+			it := board.Sections[si].Items[ii]
 			end := itemEnd(lines, ss, ii)
-			for l := start + 1; l < end && l < len(out); l++ {
-				t := strings.TrimRight(stripANSI(out[l]), " ")
-				switch {
-				case strings.HasPrefix(t, questionPrefix):
-					out[l] = questionStyle.Render(t)
-				case strings.HasPrefix(t, replyPrefix):
-					out[l] = replyLineStyle.Render(t)
+			for _, mk := range []struct {
+				prefix, text string
+				style        lipgloss.Style
+			}{
+				{questionPrefix, plainMark(askText(it)), questionStyle},
+				{replyPrefix, plainMark(answerOf(it)), replyLineStyle},
+			} {
+				if mk.text == "" {
+					continue
+				}
+				if f, l, ok := markBlock(lines, start+1, end, mk.prefix, mk.text); ok {
+					swaps = append(swaps, swap{f, l, reflow(mk.prefix, mk.text, width, mk.style)})
 				}
 			}
 		}
+	}
+	sort.Slice(swaps, func(i, j int) bool { return swaps[i].first < swaps[j].first })
+	var out []string
+	next := 0
+	for i := 0; i < len(lines); i++ {
+		if next < len(swaps) && i == swaps[next].first {
+			out = append(out, swaps[next].rows...)
+			i = swaps[next].last
+			next++
+			continue
+		}
+		out = append(out, lines[i])
 	}
 	return out
 }
@@ -157,30 +247,33 @@ const (
 	hoverQuestion
 )
 
-// hoverTarget is the clickable thing under the pointer: which rendered line
-// and what it is.
+// hoverTarget is the clickable thing under the pointer: the rendered lines
+// it covers (line through last) and what it is.
 type hoverTarget struct {
-	line int
-	kind hoverKind
+	line, last int
+	kind       hoverKind
 }
 
-// isQuestionLine reports a rendered line that is an item's question.
+// bulletCells is how many columns from the left edge tick an item — the
+// bullet, its space, and a little slack, so the target is easy to hit.
+const bulletCells = 4
+
+// isQuestionLine reports a rendered line that starts a question.
 func isQuestionLine(rendered string) bool {
-	return strings.HasPrefix(strings.TrimRight(stripANSI(rendered), " "), questionPrefix)
+	return strings.HasPrefix(strings.TrimLeft(strings.TrimRight(stripANSI(rendered), " "), " "), questionPrefix)
 }
 
-// paintHover repaints the hovered bullet or question on a copy-safe line: the
-// bullet glyph turns solid, the question goes bold and underlined.
-func paintHover(line string, kind hoverKind) string {
-	switch kind {
+// paintHover repaints what the pointer is over, on lines the caller has
+// already copied: the leading cells of a bullet turn solid, and every line of
+// a question goes bold and underlined.
+func paintHover(lines []string, h hoverTarget) {
+	switch h.kind {
 	case hoverBullet:
-		for _, g := range []string{"•", "✓", "□"} {
-			if strings.Contains(line, g) {
-				return strings.Replace(line, g, bulletHotStyle.Render(g), 1)
-			}
-		}
+		l := lines[h.line]
+		lines[h.line] = bulletHotStyle.Render(stripANSI(ansi.Cut(l, 0, bulletCells))) + ansi.Cut(l, bulletCells, visibleWidth(l))
 	case hoverQuestion:
-		return questionHotStyle.Render(strings.TrimRight(stripANSI(line), " "))
+		for i := h.line; i <= h.last && i < len(lines); i++ {
+			lines[i] = questionHotStyle.Render(strings.TrimRight(stripANSI(lines[i]), " "))
+		}
 	}
-	return line
 }

@@ -133,12 +133,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
-		case "]":
-			m.moveItemCursor(1)
-			return m, nil
-		case "[":
-			m.moveItemCursor(-1)
-			return m, nil
+		case "j", "]":
+			if m.moveItemCursor(1) {
+				return m, nil
+			}
+		case "k", "[":
+			if m.moveItemCursor(-1) {
+				return m, nil
+			}
 		case "}":
 			m.moveQuestionCursor(1)
 			return m, nil
@@ -175,9 +177,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp.GotoBottom()
 			return m, nil
 		case "tab":
+			m.itemSec, m.itemIdx = -1, -1 // Tab moves between sections, not items
 			m.moveCursor(1)
 			return m, nil
 		case "shift+tab":
+			m.itemSec, m.itemIdx = -1, -1
 			m.moveCursor(-1)
 			return m, nil
 		case "enter", " ":
@@ -384,18 +388,19 @@ func (m *model) compose() string {
 	// Overlays that swap or add a line work on a copy, before any tint is
 	// layered on: the hovered bullet or question turns solid, and a reply
 	// being typed is drawn under its item.
-	if m.hover.line >= 0 && m.hover.line < len(lines) {
+	if m.hover.line >= 0 && m.hover.last < len(lines) {
 		lines = append([]string(nil), lines...)
-		lines[m.hover.line] = paintHover(lines[m.hover.line], m.hover.kind)
+		paintHover(lines, m.hover)
 	}
-	if l, text, insert, ok := m.typingRow(m.renderWidth()); ok && l <= len(lines) {
-		copied := append([]string(nil), lines...)
-		if insert {
-			copied = append(copied[:l], append([]string{text}, copied[l:]...)...)
+	if f, l, text, insert, ok := m.typingRow(m.renderWidth()); ok && l <= len(lines) {
+		copied := append([]string(nil), lines[:f]...)
+		copied = append(copied, text)
+		if !insert {
+			l++
 		} else {
-			copied[l] = text
+			l = f
 		}
-		lines = copied
+		lines = append(copied, lines[l:]...)
 	}
 	display := composeMarked(lines, m.changed, m.lineFlash && !m.noFlash, m.renderWidth())
 	display = applyCursorHighlight(display, m.headerLines, m.cursor, m.renderWidth())

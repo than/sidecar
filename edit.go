@@ -61,6 +61,17 @@ func hasAsk(it BoardItem) bool {
 	return false
 }
 
+// askText is the question on the item's "Ask:" line, "" when it has none.
+func askText(it BoardItem) string {
+	_, rest, _ := strings.Cut(it.Raw, "\n")
+	for _, ln := range strings.Split(rest, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(ln), "Ask:"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
 // isUnanswered reports a question still waiting on the human.
 func isUnanswered(it BoardItem) bool { return hasAsk(it) && answerOf(it) == "" }
 

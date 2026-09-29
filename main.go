@@ -31,12 +31,13 @@ usage: sidecar [file.md]         (default: .sidecar/sidecar.md)
        sidecar --no-flash [file] disable the subtle change-flash (▸ still shows)
        sidecar --no-mouse [file] start without mouse capture (native text selection)
 
-keys:  j/k, arrows, PgUp/PgDn, wheel        scroll
+keys:  arrows, PgUp/PgDn, wheel             scroll
+       j / k                                move between items (scrolls when there are none)
        g / G                                top / bottom
        tab / shift+tab                      move between sections
        enter / space                        collapse / expand section
-       click a • bullet, or  ] / [ then x   tick it ✓ (again to untick)
-       click a ? question, or  a            answer the agent, in your own words
+       click a • bullet, or  space          tick it ✓ (again to untick)
+       click a ? question, or  enter        answer the agent, in your own words
        } / {                                next / previous open question
        u                                    undo the last change made from the viewer
        esc                                  deselect

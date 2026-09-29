@@ -95,10 +95,10 @@ func (m *model) selectItem(si, ii int) {
 }
 
 // moveItemCursor steps to the next (+1) or previous (-1) item, wrapping.
-func (m *model) moveItemCursor(delta int) {
+func (m *model) moveItemCursor(delta int) bool {
 	all, cur := m.itemPositions()
 	if len(all) == 0 {
-		return
+		return false
 	}
 	next := 0
 	switch {
@@ -108,6 +108,7 @@ func (m *model) moveItemCursor(delta int) {
 		next = len(all) - 1
 	}
 	m.selectItem(all[next][0], all[next][1])
+	return true
 }
 
 // moveQuestionCursor selects the next (+1) or previous (-1) unanswered
@@ -160,9 +161,9 @@ func (m *model) itemKey(key string) bool {
 	switch key {
 	case "esc":
 		m.clearItemCursor()
-	case "x":
+	case "x", " ":
 		m.tick(label, it)
-	case "a":
+	case "a", "enter":
 		m.startReply(it)
 	default:
 		return false
@@ -289,7 +290,7 @@ func (m model) hint() string {
 	if answerOf(it) != "" {
 		reply = "a edit reply"
 	}
-	return strings.Join([]string{"[ prev · ] next", tick, reply, "esc"}, " · ")
+	return strings.Join([]string{"j k move", "space " + strings.TrimPrefix(tick, "x "), "enter " + strings.TrimPrefix(reply, "a "), "esc"}, " · ")
 }
 
 // itemAtLine finds the mapped, real item whose rendered lines include line.
@@ -308,19 +309,24 @@ func (m model) itemAtLine(line int) (si, ii, start int, ok bool) {
 }
 
 // targetAt classifies what is under a click or the pointer: the bullet (the
-// first two columns of an item's first line) or the item's question line.
-func (m model) targetAt(x, line int) (si, ii int, kind hoverKind) {
+// first few columns of an item's first line) or any line of the item's
+// question. last is the question's final line.
+func (m model) targetAt(x, line int) (si, ii, last int, kind hoverKind) {
 	si, ii, start, ok := m.itemAtLine(line)
 	if !ok {
-		return 0, 0, hoverNone
+		return 0, 0, 0, hoverNone
 	}
-	switch {
-	case line == start && x <= 1:
-		return si, ii, hoverBullet
-	case isQuestionLine(m.renderedLines[line]):
-		return si, ii, hoverQuestion
+	if line == start && x < bulletCells {
+		return si, ii, line, hoverBullet
 	}
-	return si, ii, hoverNone
+	it := m.board.Sections[si].Items[ii]
+	if q := plainMark(askText(it)); q != "" {
+		end := itemEnd(m.renderedLines, m.itemStarts[si], ii)
+		if f, l, ok := markBlock(m.renderedLines, start+1, end, questionPrefix, q); ok && line >= f && line <= l {
+			return si, ii, l, hoverQuestion
+		}
+	}
+	return si, ii, line, hoverNone
 }
 
 // mouseClick acts on a left click: a section header collapses, a bullet
@@ -343,7 +349,7 @@ func (m *model) mouseClick(x, y int) {
 			return
 		}
 	}
-	si, ii, kind := m.targetAt(x, line)
+	si, ii, _, kind := m.targetAt(x, line)
 	if _, _, _, ok := m.itemAtLine(line); !ok {
 		m.notice = fmt.Sprintf("click %d,%d — nothing to click on that line", x, y)
 		return
@@ -366,8 +372,13 @@ func (m *model) setHover(x, y int) {
 	next := hoverTarget{line: -1}
 	if y >= 0 && y < m.vp.Height {
 		line := y + m.vp.YOffset
-		if _, _, kind := m.targetAt(x, line); kind != hoverNone {
-			next = hoverTarget{line: line, kind: kind}
+		if si, ii, last, kind := m.targetAt(x, line); kind != hoverNone {
+			first := line
+			if kind == hoverQuestion {
+				start := m.itemStarts[si][ii]
+				first, _, _ = markBlock(m.renderedLines, start+1, itemEnd(m.renderedLines, m.itemStarts[si], ii), questionPrefix, plainMark(askText(m.board.Sections[si].Items[ii])))
+			}
+			next = hoverTarget{line: first, last: last, kind: kind}
 		}
 	}
 	if next != m.hover {
@@ -376,12 +387,12 @@ func (m *model) setHover(x, y int) {
 	}
 }
 
-// typingRow finds where the reply being typed is drawn: on the item's reply
-// line when it has one, otherwise as a new line after its last line. insert
-// says which.
-func (m model) typingRow(width int) (line int, text string, insert, ok bool) {
+// typingRow finds where the reply being typed is drawn: over the item's
+// reply block when it has one (first through last), otherwise as a new line
+// after its last line (insert). text is the styled row.
+func (m model) typingRow(width int) (first, last int, text string, insert, ok bool) {
 	if !m.typing || m.itemSec < 0 || m.itemSec >= len(m.itemStarts) || m.itemIdx >= len(m.itemStarts[m.itemSec]) {
-		return 0, "", false, false
+		return 0, 0, "", false, false
 	}
 	ss := m.itemStarts[m.itemSec]
 	end := itemEnd(m.renderedLines, ss, m.itemIdx)
@@ -398,16 +409,17 @@ func (m model) typingRow(width int) (line int, text string, insert, ok bool) {
 	for visibleWidth(shown) > room && shown != "" {
 		shown = string([]rune(shown)[1:])
 	}
-	row := typingStyle.Render(" " + replyPrefix + shown + "▌ ")
+	row := "  " + typingStyle.Render(" "+replyPrefix+shown+"▌ ")
 	if showHint {
 		row += "  " + hintStyle.Render(hint)
 	}
-	for l := ss[m.itemIdx] + 1; l < end; l++ {
-		if strings.HasPrefix(strings.TrimRight(stripANSI(m.renderedLines[l]), " "), replyPrefix) {
-			return l, row, false, true
+	it := m.board.Sections[m.itemSec].Items[m.itemIdx]
+	if r := plainMark(answerOf(it)); r != "" {
+		if f, l, found := markBlock(m.renderedLines, ss[m.itemIdx]+1, end, replyPrefix, r); found {
+			return f, l, row, false, true
 		}
 	}
-	return end, row, true, true
+	return end, end, row, true, true
 }
 
 func (m *model) toggleMouse() tea.Cmd {
