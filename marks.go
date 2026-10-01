@@ -102,14 +102,14 @@ func plainMark(s string) string { return strings.NewReplacer("`", "", "*", "").R
 func markBlock(lines []string, from, to int, prefix, text string) (first, last int, ok bool) {
 	words := strings.Fields(text)
 	for l := from; l < to && l < len(lines); l++ {
-		t := strings.TrimLeft(strings.TrimRight(stripANSI(lines[l]), " "), " ")
+		t := strings.TrimLeft(strings.TrimRight(plainText(lines[l]), " "), " ")
 		if !strings.HasPrefix(t, prefix) {
 			continue
 		}
 		got := strings.Fields(strings.TrimPrefix(t, prefix))
 		last = l
 		for last+1 < to && last+1 < len(lines) && len(got) < len(words) {
-			more := strings.Fields(stripANSI(lines[last+1]))
+			more := strings.Fields(plainText(lines[last+1]))
 			if len(more) == 0 || len(got)+len(more) > len(words) || !equalWords(words[len(got):len(got)+len(more)], more) {
 				break
 			}

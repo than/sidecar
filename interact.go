@@ -89,6 +89,9 @@ func (m model) itemPositions() (all [][2]int, cur int) {
 }
 
 func (m *model) selectItem(si, ii int) {
+	if si != m.itemSec || ii != m.itemIdx {
+		m.linkIdx = 0
+	}
 	m.itemSec, m.itemIdx, m.cursor = si, ii, si
 	m.recompose()
 	m.scrollTo(m.itemStarts[si][ii])
@@ -165,6 +168,8 @@ func (m *model) itemKey(key string) bool {
 		m.tick(label, it)
 	case "a", "enter":
 		m.startReply(it)
+	case "o":
+		m.openItemLink()
 	default:
 		return false
 	}
@@ -290,7 +295,11 @@ func (m model) hint() string {
 	if answerOf(it) != "" {
 		reply = "a edit reply"
 	}
-	return strings.Join([]string{"j k move", "space " + strings.TrimPrefix(tick, "x "), "enter " + strings.TrimPrefix(reply, "a "), "esc"}, " · ")
+	parts := []string{"j k move", "space " + strings.TrimPrefix(tick, "x "), "enter " + strings.TrimPrefix(reply, "a ")}
+	if len(m.itemLinks(m.itemSec, m.itemIdx)) > 0 {
+		parts = append(parts, "o open link")
+	}
+	return strings.Join(append(parts, "esc"), " · ")
 }
 
 // itemAtLine finds the mapped, real item whose rendered lines include line.

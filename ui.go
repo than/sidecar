@@ -93,6 +93,7 @@ type model struct {
 	typing           bool   // a reply is being typed under the selected item
 	input            string // the reply typed so far
 	hover            hoverTarget
+	linkIdx          int // which of the selected item's links o opens next
 	undo             []undoEntry
 }
 

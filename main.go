@@ -38,6 +38,7 @@ keys:  arrows, PgUp/PgDn, wheel             scroll
        enter / space                        collapse / expand section
        click a • bullet, or  space          tick it ✓ (again to untick)
        click a ? question, or  enter        answer the agent, in your own words
+       o                                    open the selected item's link (again for the next)
        } / {                                next / previous open question
        u                                    undo the last change made from the viewer
        esc                                  deselect
