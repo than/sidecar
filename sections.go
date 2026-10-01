@@ -159,6 +159,7 @@ func entryStyleRules(sections []Section, bullet string) string {
 			b.WriteString(" — it belongs in a later section")
 		}
 		b.WriteString(" until it needs a decision, and then the `Next:` line asks for that decision.\n")
+		b.WriteString("\nEach `" + human.Header() + "` entry is one next action: one physical step, in one place — one tool or site, one verb — that the human can finish in one sitting. A `Next:` line that says \"and\" or names two places is two entries. Put what they need to act in the entry itself: the direct link, and the exact values to paste, so nothing has to be looked up.\n")
 	}
 	b.WriteString("\nWhen a turn ends, leave its result as an entry and, under it, an indented `Ask:` line with one narrative question — \"what did you change on your side?\", \"how did the deploy go?\" — never a yes/no. The human sees it as `? …` and answers under it; the answer arrives as an `Answer:` line, and sidecar's hook reports it after your next tool call, so read it, act on it, then clear the `Ask:` and `Answer:` lines or move the entry. The human can also click any entry's bullet, which turns it to `✓` (`- [x]`): read that as \"I did this\". The human never moves entries between sections — filing them stays yours.\n")
 	return b.String()
