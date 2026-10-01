@@ -68,7 +68,7 @@ func TestLinkSpanColumnsCoverTheDisplayText(t *testing.T) {
 
 func TestClickingALinkOpensItInsteadOfTheItem(t *testing.T) {
 	m, opened := linkModel(t)
-	m = clickAt(t, m, "https://example.com/pull/7", 1)
+	m = clickAt(t, m, "example.com/pull/7", 1)
 	if len(*opened) != 1 || (*opened)[0] != "https://example.com/pull/7/files" {
 		t.Fatalf("opened %v", *opened)
 	}
@@ -118,8 +118,8 @@ func TestHoveringALinkPaintsItAndShowsTheAddress(t *testing.T) {
 	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 	m, _ := linkModel(t)
 	rest := m.vp.View()
-	m = mouseAt(t, m, "https://example.com/pull/7", 1, tea.MouseActionMotion, tea.MouseButtonNone)
-	if m.hover.kind != hoverLink || m.vp.View() == rest || !strings.Contains(m.vp.View(), linkHotStyle.Render("https://example.com/pull/7/files")) {
+	m = mouseAt(t, m, "example.com/pull/7", 1, tea.MouseActionMotion, tea.MouseButtonNone)
+	if m.hover.kind != hoverLink || m.vp.View() == rest || !strings.Contains(m.vp.View(), linkHotStyle.Render("example.com/pull/7/files")) {
 		t.Fatalf("hovering a link should paint it (hover %+v)", m.hover)
 	}
 	if bar := stripANSI(m.statusBar()); !strings.Contains(bar, "https://example.com/pull/7/files") {
@@ -137,8 +137,53 @@ func TestClicksAreHeldWhileTyping(t *testing.T) {
 	if !m.typing {
 		t.Fatal("setup: reply should be open")
 	}
-	m = clickAt(t, m, "https://example.com/pull/7", 1)
+	m = clickAt(t, m, "example.com/pull/7", 1)
 	if len(*opened) != 0 || !m.typing || !strings.Contains(m.notice, "finish the reply") {
 		t.Fatalf("a click while typing must not act (opened %v, typing %v, notice %q)", *opened, m.typing, m.notice)
+	}
+}
+
+func TestOKeyOpensTheSelectedItemsLinksOneByOne(t *testing.T) {
+	m, opened := linkModel(t)
+	m = press(t, m, "j")
+	if !strings.Contains(m.hint(), "o open link") {
+		t.Fatalf("the hint should offer o when the item has a link: %q", m.hint())
+	}
+	m = press(t, m, "o")
+	m = press(t, m, "o")
+	m = press(t, m, "o")
+	want := []string{"https://example.com/pull/7/files", "https://github.com/than/sidecar/pull/30", "https://example.com/pull/7/files"}
+	if strings.Join(*opened, " ") != strings.Join(want, " ") {
+		t.Fatalf("opened %v, want %v", *opened, want)
+	}
+	if !strings.Contains(m.notice, "of 2") {
+		t.Fatalf("notice %q should say which link", m.notice)
+	}
+}
+
+func TestOKeyOnAnItemWithoutLinksSaysSo(t *testing.T) {
+	m, _ := marksModel(t)
+	opened := &[]string{}
+	prev := openURL
+	openURL = func(u string) error { *opened = append(*opened, u); return nil }
+	t.Cleanup(func() { openURL = prev })
+	m = press(t, m, "j", "o")
+	if len(*opened) != 0 || m.notice != "no link on this item" {
+		t.Fatalf("opened %v, notice %q", *opened, m.notice)
+	}
+}
+
+func TestQuestionWithALinkInItStillWrapsAndColors(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "sidecar.md")
+	writeFile(t, p, "## 🧠 Needs you\n\n- Result.\n  Ask: Did https://example.com/some/long/path/here/for/wrapping work for you after the deploy finished?\n  Next: review.\n")
+	m := testModel(t, p)
+	found := false
+	for _, ln := range m.renderedLines {
+		if strings.HasPrefix(plainText(ln), "  ? Did") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("question with a link should still be drawn as an indented block:\n%s", stripANSI(strings.Join(m.renderedLines, "\n")))
 	}
 }
