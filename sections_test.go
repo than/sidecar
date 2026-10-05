@@ -178,3 +178,25 @@ func TestEntryStyleExampleDropsQueuePairWithoutAgentSection(t *testing.T) {
 		t.Errorf("queue pair missing or misdirected with 🤖 present:\n%s", full)
 	}
 }
+
+// A Needs-you entry is one physical action in one place, with everything
+// needed to act inside it — and the rule names the section by its own header,
+// so it never points at a heading the board lacks.
+func TestEntryStyleRulesTeachOneNextAction(t *testing.T) {
+	got := entryStyleRules(defaultSections(), "- ")
+	for _, want := range []string{
+		"one next action",
+		"one tool or site, one verb",
+		"one sitting",
+		"is two entries",
+		"the direct link, and the exact values to paste",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rules missing %q:\n%s", want, got)
+		}
+	}
+	noHuman := []Section{{"🚧", "In progress", "actively being worked"}}
+	if got := entryStyleRules(noHuman, "- "); strings.Contains(got, "one next action") {
+		t.Errorf("the rule names the human section and must vanish without one:\n%s", got)
+	}
+}
