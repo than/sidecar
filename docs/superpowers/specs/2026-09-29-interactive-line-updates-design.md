@@ -41,7 +41,7 @@ Plain markdown; the file never contains a control.
 
 ## Keyboard
 
-`j` / `k` move between items (they scroll when the board has none; arrows and the wheel always scroll), `space` ticks, `enter` replies, `}` / `{` jump between unanswered questions, `u` undoes, `esc` deselects, `tab` moves between sections. The status bar counts open questions.
+`j` / `k` move between items (they scroll when the board has none; arrows and the wheel always scroll), `space` ticks, `enter` replies, `o` opens the selected item's links one by one, `}` / `{` jump between unanswered questions, `u` undoes, `esc` deselects, `tab` moves between sections. The status bar counts open questions.
 
 ## Known limits
 

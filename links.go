@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"unicode/utf8"
@@ -15,6 +16,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
+
+var oscRE = regexp.MustCompile(`\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)`)
+
+// plainText is a rendered line's visible text: styling and hyperlink
+// sequences removed. stripANSI keeps the hyperlink sequences on purpose — a
+// link whose target alone changed must still read as a changed line — so code
+// that matches words uses this instead.
+func plainText(s string) string { return oscRE.ReplaceAllString(stripANSI(s), "") }
 
 var linkHotStyle = lipgloss.NewStyle().Bold(true).Underline(true).
 	Foreground(lipgloss.Color("#101010")).Background(lipgloss.Color("#61AFEF"))
@@ -130,4 +139,45 @@ func (m *model) openLink(target string) {
 func paintLink(line string, s linkSpan) string {
 	w := visibleWidth(line)
 	return ansi.Cut(line, 0, s.from) + linkHotStyle.Render(stripANSI(ansi.Cut(line, s.from, s.to))) + ansi.Cut(line, s.to, w)
+}
+
+// itemLinks lists the distinct link targets on an item's rendered lines, in
+// reading order.
+func (m model) itemLinks(si, ii int) []string {
+	start := m.itemStarts[si][ii]
+	end := itemEnd(m.renderedLines, m.itemStarts[si], ii)
+	var out []string
+	seen := map[string]bool{}
+	for l := start; l < end && l < len(m.renderedLines); l++ {
+		for _, s := range linkSpans(m.renderedLines[l]) {
+			if !seen[s.url] {
+				seen[s.url] = true
+				out = append(out, s.url)
+			}
+		}
+	}
+	return out
+}
+
+// openItemLink opens the selected item's next link — the first on the first
+// press, the following one on each press after — so a link can be reached
+// from the keyboard, whatever the terminal does with mouse clicks.
+func (m *model) openItemLink() {
+	if m.itemSec < 0 || m.itemSec >= len(m.itemStarts) || m.itemIdx >= len(m.itemStarts[m.itemSec]) {
+		return
+	}
+	links := m.itemLinks(m.itemSec, m.itemIdx)
+	if len(links) == 0 {
+		m.notice = "no link on this item"
+		return
+	}
+	if m.linkIdx >= len(links) {
+		m.linkIdx = 0
+	}
+	target := links[m.linkIdx]
+	m.openLink(target)
+	if len(links) > 1 {
+		m.notice = fmt.Sprintf("%s (%d of %d — o for the next)", m.notice, m.linkIdx+1, len(links))
+	}
+	m.linkIdx++
 }
